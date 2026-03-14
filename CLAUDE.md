@@ -11,6 +11,7 @@ Claude agents in this repository must follow `AGENTS.md` as the canonical policy
 5. Include architecture compliance notes in task/PR summaries.
 6. Create a short-lived branch from `main` before coding material changes.
 7. After pushing that branch, immediately open a PR to `main` unless explicitly told not to.
+8. Use a real PR creation command (for example `gh pr create`) and return the resulting PR URL.
 
 ## If Instructions Conflict
 
