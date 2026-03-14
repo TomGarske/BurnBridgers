@@ -15,9 +15,6 @@ def main() -> int:
         "## Problem",
         "## ADRs Referenced",
         "## Architecture Impact",
-        "## Migration Impact",
-        "## Rollback Plan",
-        "## Tests",
         "## Risks / Follow-ups",
     ]
 
