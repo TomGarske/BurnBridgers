@@ -15,6 +15,8 @@ signal handshake_status_updated(status_text: String)
 signal avatar_texture_updated(steam_id: int)
 signal lobby_list_updated(lobbies: Array)
 
+enum InviteState { INVITED, ACCEPTED, JOINING, JOINED, FAILED }
+
 # ---------------------------------------------------------------------------
 # State
 # ---------------------------------------------------------------------------
@@ -34,7 +36,10 @@ var _pending_invite_notifications: Array[Dictionary] = []
 var _active_invite_lobby_id: int = 0
 var _invite_dialog: ConfirmationDialog = null
 var _pending_join_lobby_id: int = 0
+var _pending_host_request: bool = false
+var _host_retry_count: int = 0
 var _next_init_retry_at_ms: int = 0
+var _next_host_retry_at_ms: int = 0
 var _cached_public_lobbies: Array[Dictionary] = []
 
 const _RESULT_OK: int = 1
@@ -45,6 +50,9 @@ const _PERSONA_STATE_OFFLINE: int = 0
 const _AVATAR_MEDIUM: int = 2
 const _INVITE_TIMEOUT_SECONDS: int = 45
 const _INIT_RETRY_MS: int = 2500
+const _HOST_RETRY_MS: int = 3000
+const _MAX_HOST_RETRIES: int = 3
+const _MAX_DEBUG_HISTORY: int = 300
 const _STEAM_EXTENSION_CANDIDATES: Array[String] = [
 	"res://addons/godotsteam/godotsteam.gdextension",
 	"res://addons/GodotSteam/godotsteam.gdextension",
@@ -62,6 +70,12 @@ func _process(_delta: float) -> void:
 	# Must be called every frame to dispatch Steam callbacks
 	if steam_ready and _steam != null:
 		_steam.call("run_callbacks")
+		# Check if we have a pending host request that needs retry
+		if _pending_host_request and _host_retry_count < _MAX_HOST_RETRIES:
+			var now_ms: int = Time.get_ticks_msec()
+			if now_ms >= _next_host_retry_at_ms:
+				_emit_debug("[SteamManager] Retrying host lobby (attempt %d/%d)..." % [_host_retry_count + 1, _MAX_HOST_RETRIES], false)
+				_attempt_create_lobby()
 		return
 	var now_ms: int = Time.get_ticks_msec()
 	if now_ms >= _next_init_retry_at_ms:
@@ -72,7 +86,10 @@ func _process(_delta: float) -> void:
 # ---------------------------------------------------------------------------
 func host_lobby() -> void:
 	if not steam_ready:
-		_emit_debug("[SteamManager] Cannot host lobby: Steam is not initialized.", true)
+		_pending_host_request = true
+		_host_retry_count = 0
+		_emit_debug("[SteamManager] Steam not initialized yet. Queueing host request and retrying init...", false)
+		_try_initialize_steam()
 		return
 
 	# Reset existing state so repeated Host attempts are reliable.
@@ -83,8 +100,23 @@ func host_lobby() -> void:
 		multiplayer.multiplayer_peer.close()
 		multiplayer.multiplayer_peer = null
 
+	_pending_host_request = false
+	_host_retry_count = 0
 	is_host = true
-	_emit_debug("[SteamManager] Creating lobby...", false)
+	_attempt_create_lobby()
+
+func _attempt_create_lobby() -> void:
+	if not steam_ready or _steam == null:
+		_pending_host_request = true
+		_emit_debug("[SteamManager] Cannot create lobby: Steam is not initialized.", true)
+		return
+	
+	# Ensure P2P relay is enabled before creating lobby (important for Steam Deck/Linux)
+	if _steam.has_method("allowP2PPacketRelay"):
+		_steam.call("allowP2PPacketRelay", true)
+		_emit_debug("[SteamManager] Enabled P2P packet relay for lobby creation.", false)
+	
+	_emit_debug("[SteamManager] Creating lobby (platform: %s, App ID: %d)..." % [OS.get_name(), get_current_app_id()], false)
 	# LOBBY_TYPE_PUBLIC so others can find it; max 4 players per spec
 	_steam.call("createLobby", _LOBBY_TYPE_PUBLIC, 4)
 
@@ -98,6 +130,22 @@ func join_lobby(target_lobby_id: int) -> void:
 	is_host = false
 	_emit_debug("[SteamManager] Joining lobby %d..." % target_lobby_id, false)
 	_steam.call("joinLobby", target_lobby_id)
+
+func leave_lobby() -> void:
+	if not steam_ready or _steam == null or lobby_id == 0:
+		_emit_debug("[SteamManager] No active lobby to leave.", false)
+		return
+	
+	_emit_debug("[SteamManager] Leaving lobby %d..." % lobby_id, false)
+	_steam.call("leaveLobby", lobby_id)
+	lobby_id = 0
+	is_host = false
+	
+	# Close multiplayer peer if active
+	if multiplayer.multiplayer_peer != null:
+		multiplayer.multiplayer_peer.close()
+		multiplayer.multiplayer_peer = null
+		_emit_debug("[SteamManager] Closed multiplayer peer.", false)
 
 func request_burnbridgers_lobby_list() -> void:
 	if not steam_ready or _steam == null:
@@ -159,17 +207,17 @@ func get_online_friends() -> Array[Dictionary]:
 		# Update invite handshake state machine.
 		if invited_friend_ids.has(friend_steam_id):
 			var info: Dictionary = invited_friend_ids[friend_steam_id]
-			var state: String = str(info.get("state", "Invited"))
+			var state: InviteState = _invite_state_from_value(info.get("state", InviteState.INVITED))
 			var updated_at: int = int(info.get("updated_at", now))
 			var elapsed: int = now - updated_at
-			if member_ids.has(friend_steam_id) and state != "Joined":
-				_set_invite_state(friend_steam_id, "Joined")
-			elif state == "Invited" and game_app_id == get_current_app_id() and game_app_id != 0:
-				_set_invite_state(friend_steam_id, "Accepted")
-			elif state == "Accepted" and elapsed >= 2:
-				_set_invite_state(friend_steam_id, "Joining")
-			elif state != "Joined" and elapsed >= _INVITE_TIMEOUT_SECONDS:
-				_set_invite_state(friend_steam_id, "Failed")
+			if member_ids.has(friend_steam_id) and state != InviteState.JOINED:
+				_set_invite_state(friend_steam_id, InviteState.JOINED)
+			elif state == InviteState.INVITED and game_app_id == get_current_app_id() and game_app_id != 0:
+				_set_invite_state(friend_steam_id, InviteState.ACCEPTED)
+			elif state == InviteState.ACCEPTED and elapsed >= 2:
+				_set_invite_state(friend_steam_id, InviteState.JOINING)
+			elif state != InviteState.JOINED and elapsed >= _INVITE_TIMEOUT_SECONDS:
+				_set_invite_state(friend_steam_id, InviteState.FAILED)
 		friends.append({
 			"steam_id": friend_steam_id,
 			"name": str(_steam.call("getFriendPersonaName", friend_steam_id)),
@@ -187,7 +235,7 @@ func invite_friend_to_lobby(friend_steam_id: int) -> bool:
 		return false
 	var ok: bool = bool(_steam.call("inviteUserToLobby", lobby_id, friend_steam_id))
 	if ok:
-		_set_invite_state(friend_steam_id, "Invited")
+		_set_invite_state(friend_steam_id, InviteState.INVITED)
 		_emit_debug("[SteamManager] Invite sent to Steam ID %d." % friend_steam_id, false)
 	else:
 		_emit_debug("[SteamManager] Failed to invite Steam ID %d." % friend_steam_id, true)
@@ -198,8 +246,15 @@ func get_friend_status(friend_steam_id: int) -> String:
 	if member_ids.has(friend_steam_id):
 		return "In Lobby"
 	if invited_friend_ids.has(friend_steam_id):
-		return str(invited_friend_ids[friend_steam_id].get("state", "Invited"))
+		var state: InviteState = get_invite_state(friend_steam_id)
+		return _invite_state_label(state)
 	return "Online"
+
+func get_invite_state(friend_steam_id: int) -> InviteState:
+	if not invited_friend_ids.has(friend_steam_id):
+		return InviteState.INVITED
+	var info: Dictionary = invited_friend_ids[friend_steam_id]
+	return _invite_state_from_value(info.get("state", InviteState.INVITED))
 
 func set_local_ready_state(is_ready: bool) -> void:
 	local_ready = is_ready
@@ -250,6 +305,8 @@ func get_player_avatar_texture(target_steam_id: int) -> Texture2D:
 # ---------------------------------------------------------------------------
 func _on_steam_lobby_created(result: int, new_lobby_id: int) -> void:
 	if result == _RESULT_OK:
+		_pending_host_request = false
+		_host_retry_count = 0
 		lobby_id = new_lobby_id
 		_steam.call("setLobbyData", lobby_id, "name", steam_username + "'s Lobby")
 		_steam.call("setLobbyData", lobby_id, "game", "BurnBridgers")
@@ -259,9 +316,22 @@ func _on_steam_lobby_created(result: int, new_lobby_id: int) -> void:
 		_setup_multiplayer_peer()
 		set_local_ready_state(false)
 		lobby_created.emit(lobby_id)
-		_emit_debug("[SteamManager] Lobby created: %d" % lobby_id, false)
+		_emit_debug("[SteamManager] Lobby created successfully: %d" % lobby_id, false)
 	else:
-		_emit_debug("[SteamManager] Failed to create lobby. Result: " + str(result), true)
+		var error_msg: String = _get_steam_result_error(result)
+		_emit_debug("[SteamManager] Failed to create lobby. Result code: %d (%s)" % [result, error_msg], true)
+		
+		# Retry logic for transient failures
+		if _host_retry_count < _MAX_HOST_RETRIES:
+			_host_retry_count += 1
+			_next_host_retry_at_ms = Time.get_ticks_msec() + _HOST_RETRY_MS
+			_pending_host_request = true
+			_emit_debug("[SteamManager] Will retry lobby creation in %d ms (attempt %d/%d)..." % [_HOST_RETRY_MS, _host_retry_count, _MAX_HOST_RETRIES], false)
+		else:
+			_pending_host_request = false
+			_host_retry_count = 0
+			is_host = false
+			_emit_debug("[SteamManager] Lobby creation failed after %d attempts. Please check Steam connection and try again." % _MAX_HOST_RETRIES, true)
 
 func _on_steam_lobby_joined(joined_lobby_id: int, _permissions: int, _locked: bool, response: int) -> void:
 	if response == _CHAT_ROOM_ENTER_RESPONSE_SUCCESS:
@@ -280,7 +350,7 @@ func _on_steam_lobby_joined(joined_lobby_id: int, _permissions: int, _locked: bo
 
 func _on_lobby_chat_update(_updated_lobby: int, changed_id: int, _making_change_id: int, _chat_state: int) -> void:
 	if invited_friend_ids.has(changed_id) and get_lobby_member_ids().has(changed_id):
-		_set_invite_state(changed_id, "Joined")
+		_set_invite_state(changed_id, InviteState.JOINED)
 	_emit_debug("[SteamManager] Lobby member update for Steam ID: %d" % changed_id, false)
 	lobby_members_updated.emit()
 
@@ -292,21 +362,38 @@ func _on_lobby_invite(friend_id: int, invited_lobby_id: int, _game_id: int) -> v
 	lobby_invite_received.emit(friend_id, invited_lobby_id)
 	_enqueue_invite_notification(friend_name, invited_lobby_id)
 
-func _on_lobby_match_list(lobbies: Array) -> void:
+func _on_lobby_match_list(lobbies: Variant) -> void:
+	var lobby_ids: Array = []
+	if lobbies is Array:
+		lobby_ids = lobbies
+	elif lobbies is int:
+		var count: int = int(lobbies)
+		if _steam != null and _steam.has_method("getLobbyByIndex"):
+			for i in range(count):
+				lobby_ids.append(_steam.call("getLobbyByIndex", i))
+		else:
+			_emit_debug("[SteamManager] lobby_match_list returned count=%d but getLobbyByIndex is unavailable." % count, true)
+			lobby_list_updated.emit(_cached_public_lobbies.duplicate(true))
+			return
+	else:
+		_emit_debug("[SteamManager] Unexpected lobby_match_list payload type: %s" % [typeof(lobbies)], true)
+		lobby_list_updated.emit(_cached_public_lobbies.duplicate(true))
+		return
+
 	var filtered: Array[Dictionary] = []
-	for entry in lobbies:
-		var lobby_id: int = int(entry)
-		if lobby_id == 0:
+	for entry in lobby_ids:
+		var entry_lobby_id: int = int(entry)
+		if entry_lobby_id == 0:
 			continue
-		var game_name: String = str(_steam.call("getLobbyData", lobby_id, "game"))
+		var game_name: String = str(_steam.call("getLobbyData", entry_lobby_id, "game"))
 		if game_name != "BurnBridgers":
 			continue
-		var lobby_name: String = str(_steam.call("getLobbyData", lobby_id, "name"))
+		var lobby_name: String = str(_steam.call("getLobbyData", entry_lobby_id, "name"))
 		if lobby_name.strip_edges().is_empty():
 			lobby_name = "BurnBridgers Lobby"
-		var member_count: int = int(_steam.call("getNumLobbyMembers", lobby_id))
+		var member_count: int = int(_steam.call("getNumLobbyMembers", entry_lobby_id))
 		filtered.append({
-			"lobby_id": lobby_id,
+			"lobby_id": entry_lobby_id,
 			"name": lobby_name,
 			"members": member_count
 		})
@@ -377,13 +464,15 @@ func _emit_debug(message: String, is_error: bool) -> void:
 		"message": message,
 		"is_error": is_error
 	})
+	if debug_history.size() > _MAX_DEBUG_HISTORY:
+		debug_history.pop_front()
 	if is_error:
 		push_error(message)
 	else:
 		print(message)
 	debug_message.emit(message, is_error)
 
-func _set_invite_state(friend_steam_id: int, state: String) -> void:
+func _set_invite_state(friend_steam_id: int, state: InviteState) -> void:
 	invited_friend_ids[friend_steam_id] = {
 		"state": state,
 		"updated_at": int(Time.get_unix_time_from_system())
@@ -391,8 +480,44 @@ func _set_invite_state(friend_steam_id: int, state: String) -> void:
 	var friend_name: String = "Steam ID %d" % friend_steam_id
 	if steam_ready and _steam != null:
 		friend_name = str(_steam.call("getFriendPersonaName", friend_steam_id))
-	_handshake_row_text = "Join test handshake: %s -> %s" % [friend_name, state]
+	_handshake_row_text = "Join test handshake: %s -> %s" % [friend_name, _invite_state_label(state)]
 	handshake_status_updated.emit(_handshake_row_text)
+
+func _invite_state_label(state: InviteState) -> String:
+	match state:
+		InviteState.INVITED:
+			return "Invited"
+		InviteState.ACCEPTED:
+			return "Accepted"
+		InviteState.JOINING:
+			return "Joining"
+		InviteState.JOINED:
+			return "In Lobby"
+		InviteState.FAILED:
+			return "Failed"
+		_:
+			return "Online"
+
+func _invite_state_from_value(value: Variant) -> InviteState:
+	if value is int:
+		var state_int: int = int(value)
+		if state_int >= InviteState.INVITED and state_int <= InviteState.FAILED:
+			return state_int
+		return InviteState.INVITED
+	var state_name: String = str(value)
+	match state_name:
+		"Invited":
+			return InviteState.INVITED
+		"Accepted":
+			return InviteState.ACCEPTED
+		"Joining":
+			return InviteState.JOINING
+		"Joined", "In Lobby":
+			return InviteState.JOINED
+		"Failed":
+			return InviteState.FAILED
+		_:
+			return InviteState.INVITED
 
 func _enqueue_invite_notification(friend_name: String, invited_lobby_id: int) -> void:
 	_pending_invite_notifications.append({
@@ -525,6 +650,10 @@ func _try_initialize_steam() -> void:
 		_pending_join_lobby_id = 0
 		_emit_debug("[SteamManager] Resuming queued join for lobby %d after Steam init." % queued_lobby_id, false)
 		join_lobby(queued_lobby_id)
+	# If a host request was queued, attempt it now.
+	if _pending_host_request:
+		_emit_debug("[SteamManager] Resuming queued host request after Steam init.", false)
+		host_lobby()
 	# Refresh lobby browser data on successful init.
 	request_burnbridgers_lobby_list()
 
@@ -541,3 +670,131 @@ func _emit_steam_environment_hints() -> void:
 	_emit_debug("[SteamManager] Env SteamAppId=%s SteamGameId=%s" % [steam_app_id, steam_game_id], true)
 	if OS.get_name() == "Linux":
 		_emit_debug("[SteamManager] Linux/Steam Deck hint: launch from Steam client OR ensure steam_appid.txt exists next to the game binary when launching outside Steam.", true)
+
+func _get_steam_result_error(result_code: int) -> String:
+	# Common Steam API result codes (EResult enum)
+	match result_code:
+		1: return "OK"
+		2: return "Fail"
+		3: return "NoConnection"
+		5: return "InvalidPassword"
+		6: return "LoggedInElsewhere"
+		7: return "InvalidProtocolVer"
+		8: return "InvalidParam"
+		9: return "FileNotFound"
+		10: return "Busy"
+		11: return "InvalidState"
+		12: return "InvalidName"
+		13: return "InvalidEmail"
+		14: return "DuplicateName"
+		15: return "AccessDenied"
+		16: return "Timeout"
+		17: return "Banned"
+		18: return "AccountNotFound"
+		19: return "InvalidSteamID"
+		20: return "ServiceUnavailable"
+		21: return "NotLoggedOn"
+		22: return "Pending"
+		23: return "EncryptionFailure"
+		24: return "InsufficientPrivilege"
+		25: return "LimitExceeded"
+		26: return "Revoked"
+		27: return "Expired"
+		28: return "AlreadyRedeemed"
+		29: return "DuplicateRequest"
+		30: return "AlreadyOwned"
+		31: return "IPNotFound"
+		32: return "PersistFailed"
+		33: return "LockingFailed"
+		34: return "LogonSessionReplaced"
+		35: return "ConnectFailed"
+		36: return "HandshakeFailed"
+		37: return "IOFailure"
+		38: return "RemoteDisconnect"
+		39: return "ShoppingCartNotFound"
+		40: return "Blocked"
+		41: return "Ignored"
+		42: return "NoMatch"
+		43: return "AccountDisabled"
+		44: return "ServiceReadOnly"
+		45: return "AccountNotFeatured"
+		46: return "AdministratorOK"
+		47: return "ContentVersion"
+		48: return "TryAnotherCM"
+		49: return "PasswordRequiredToKickSession"
+		50: return "AlreadyLoggedInElsewhere"
+		51: return "Suspended"
+		52: return "Cancelled"
+		53: return "DataCorruption"
+		54: return "DiskFull"
+		55: return "RemoteCallFailed"
+		56: return "PasswordUnset"
+		57: return "ExternalAccountUnlinked"
+		58: return "PSNTicketInvalid"
+		59: return "ExternalAccountAlreadyLinked"
+		60: return "RemoteFileConflict"
+		61: return "IllegalPassword"
+		62: return "SameAsPreviousValue"
+		63: return "AccountLogonDenied"
+		64: return "CannotUseOldPassword"
+		65: return "InvalidLoginAuthCode"
+		66: return "AccountLoginDeniedNoMail"
+		67: return "HardwareNotCapableOfIPT"
+		68: return "IPTInitError"
+		69: return "ParentalControlRestricted"
+		70: return "FacebookQueryError"
+		71: return "ExpiredLoginAuthCode"
+		72: return "IPLoginRestrictionFailed"
+		73: return "AccountLockedDown"
+		74: return "AccountLogonDeniedVerifiedEmailRequired"
+		75: return "NoMatchingURL"
+		76: return "BadResponse"
+		77: return "RequirePasswordReEntry"
+		78: return "ValueOutOfRange"
+		79: return "UnexpectedError"
+		80: return "Disabled"
+		81: return "InvalidCEGSubmission"
+		82: return "RestrictedDevice"
+		83: return "RegionLocked"
+		84: return "RateLimitExceeded"
+		85: return "AccountLoginDeniedNeedTwoFactor"
+		86: return "ItemDeleted"
+		87: return "AccountLoginDeniedThrottle"
+		88: return "TwoFactorCodeMismatch"
+		89: return "TwoFactorActivationCodeMismatch"
+		90: return "AccountAssociatedToMultiplePartners"
+		91: return "NotModified"
+		92: return "NoMobileDevice"
+		93: return "TimeNotSynced"
+		94: return "SmsCodeFailed"
+		95: return "AccountLimitExceeded"
+		96: return "AccountActivityLimitExceeded"
+		97: return "PhoneActivityLimitExceeded"
+		98: return "RefundToWallet"
+		99: return "EmailSendFailure"
+		100: return "NotSettled"
+		101: return "NeedCaptcha"
+		102: return "GSLTDenied"
+		103: return "GSOwnerDenied"
+		104: return "InvalidItemType"
+		105: return "IPBanned"
+		106: return "GSLTExpired"
+		107: return "InsufficientFunds"
+		108: return "TooManyPending"
+		109: return "NoSiteLicensesFound"
+		110: return "WGNetworkSendExceeded"
+		111: return "AccountNotFriends"
+		112: return "LimitedUserAccount"
+		113: return "CantRemoveItem"
+		114: return "AccountDeleted"
+		115: return "ExistingUserCancelledLicense"
+		116: return "CommunityCooldown"
+		117: return "NoLauncherSpecified"
+		118: return "MustAgreeToSSA"
+		119: return "LauncherMigrated"
+		120: return "SteamRealmMismatch"
+		121: return "InvalidSignature"
+		122: return "ParseFailure"
+		123: return "NoVerifiedPhone"
+		124: return "InsufficientBattery"
+		_: return "Unknown error code"

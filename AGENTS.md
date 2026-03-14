@@ -103,6 +103,8 @@ If yes to any, flag clearly and propose corrective action.
 - If architecture requires discussion first, land ADR branch before broad implementation.
 - After pushing a short-lived branch, immediately create a PR unless explicitly instructed not to.
 - Default PR target is `main`.
+- PR creation must run an actual PR command/API call (for example `gh pr create`) rather than only sharing a compare URL.
+- After creating the PR, return and verify the real PR URL.
 - PR creation must include required metadata from the PR template and ADR references/classification.
 
 Every PR should state:
