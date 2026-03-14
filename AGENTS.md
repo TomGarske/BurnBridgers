@@ -96,10 +96,13 @@ If yes to any, flag clearly and propose corrective action.
 
 ## Branching and PR Expectations
 
-- Use short-lived branches for material changes (`feature/*`, `fix/*`, `hotfix/*`, `adr/*`).
+- Default development flow starts from `main`.
+- Create a short-lived branch before making material changes (`feature/*`, `fix/*`, `hotfix/*`, `adr/*`).
 - Avoid direct commits to long-lived branches except controlled integration flows.
 - Architecture-sensitive changes should include ADR updates in same branch when practical.
 - If architecture requires discussion first, land ADR branch before broad implementation.
+- After pushing a short-lived branch, immediately create a PR unless explicitly instructed not to.
+- Default PR target is `main`.
 - PR creation must include required metadata from the PR template and ADR references/classification.
 
 Every PR should state:

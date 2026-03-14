@@ -194,10 +194,10 @@ Short-lived branches:
 Rules:
 
 1. No direct commits to `main`
-2. No direct commits to `develop` except controlled integration merges
-3. Every material change happens in short-lived branches
-4. Architecture-sensitive changes should include ADR changes in the same branch when possible
-5. If architecture needs discussion first, open an `adr/*` branch and merge ADR before implementation
+2. Every material change happens in short-lived branches created from `main`
+3. Architecture-sensitive changes should include ADR changes in the same branch when possible
+4. If architecture needs discussion first, open an `adr/*` branch and merge ADR before implementation
+5. After pushing a short-lived branch, immediately open a PR to `main` unless explicitly instructed not to
 6. PR body must satisfy required metadata fields and include ADR references/classification
 
 Branch intent:
