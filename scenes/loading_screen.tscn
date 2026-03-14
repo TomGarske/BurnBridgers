@@ -1,0 +1,123 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/loading_screen.gd" id="1_loading"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_loading_card"]
+bg_color = Color(0.0745098, 0.105882, 0.164706, 0.901961)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_right = 18
+corner_radius_bottom_left = 18
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0.207843, 0.34902, 0.576471, 0.65098)
+shadow_size = 22
+shadow_color = Color(0, 0, 0, 0.45)
+content_margin_left = 24.0
+content_margin_top = 24.0
+content_margin_right = 24.0
+content_margin_bottom = 24.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_progress_bg"]
+bg_color = Color(0.0313726, 0.0431373, 0.0784314, 0.95)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.227451, 0.305882, 0.447059, 0.8)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_progress_fill"]
+bg_color = Color(0.313726, 0.607843, 0.94902, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+shadow_size = 8
+shadow_color = Color(0.133333, 0.396078, 0.694118, 0.65)
+
+[node name="LoadingScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_loading")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.0313726, 0.0431373, 0.0784314, 1)
+
+[node name="AmbientGlowTop" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -430.0
+offset_top = 28.0
+offset_right = 430.0
+offset_bottom = 260.0
+grow_horizontal = 2
+color = Color(0.184314, 0.396078, 0.741176, 0.22)
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="CardPanel" type="PanelContainer" parent="Center"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_loading_card")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Center/CardPanel"]
+layout_mode = 2
+custom_minimum_size = Vector2(560, 220)
+theme_override_constants/separation = 14
+alignment = 1
+
+[node name="Title" type="Label" parent="Center/CardPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 48
+text = "BURN BRIDGERS"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.929412, 0.960784, 1, 1)
+
+[node name="Subtitle" type="Label" parent="Center/CardPanel/VBoxContainer"]
+layout_mode = 2
+text = "Forging bridges... 0%"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.701961, 0.792157, 0.917647, 1)
+
+[node name="ProgressBar" type="ProgressBar" parent="Center/CardPanel/VBoxContainer"]
+custom_minimum_size = Vector2(500, 26)
+layout_mode = 2
+show_percentage = false
+theme_override_styles/background = SubResource("StyleBoxFlat_progress_bg")
+theme_override_styles/fill = SubResource("StyleBoxFlat_progress_fill")
+
+[node name="Spinner" type="Label" parent="Center/CardPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 34
+text = "|"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.501961, 0.796078, 1, 1)
+
+[node name="SkipHint" type="Label" parent="Center/CardPanel/VBoxContainer"]
+layout_mode = 2
+text = "Press Enter or Esc to continue"
+horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.588235, 0.654902, 0.772549, 0.9)

@@ -208,11 +208,12 @@ func get_online_friends() -> Array[Dictionary]:
 		if invited_friend_ids.has(friend_steam_id):
 			var info: Dictionary = invited_friend_ids[friend_steam_id]
 			var state: InviteState = _invite_state_from_value(info.get("state", InviteState.INVITED))
+			var invited_while_in_game: bool = bool(info.get("invited_while_in_game", false))
 			var updated_at: int = int(info.get("updated_at", now))
 			var elapsed: int = now - updated_at
 			if member_ids.has(friend_steam_id) and state != InviteState.JOINED:
 				_set_invite_state(friend_steam_id, InviteState.JOINED)
-			elif state == InviteState.INVITED and game_app_id == get_current_app_id() and game_app_id != 0:
+			elif state == InviteState.INVITED and not invited_while_in_game and game_app_id == get_current_app_id() and game_app_id != 0:
 				_set_invite_state(friend_steam_id, InviteState.ACCEPTED)
 			elif state == InviteState.ACCEPTED and elapsed >= 2:
 				_set_invite_state(friend_steam_id, InviteState.JOINING)
@@ -235,7 +236,13 @@ func invite_friend_to_lobby(friend_steam_id: int) -> bool:
 		return false
 	var ok: bool = bool(_steam.call("inviteUserToLobby", lobby_id, friend_steam_id))
 	if ok:
-		_set_invite_state(friend_steam_id, InviteState.INVITED)
+		var invited_while_in_game: bool = false
+		if _steam.has_method("getFriendGamePlayed"):
+			var game_played: Variant = _steam.call("getFriendGamePlayed", friend_steam_id)
+			if game_played is Dictionary:
+				var game_app_id: int = int(game_played.get("id", 0))
+				invited_while_in_game = game_app_id != 0 and game_app_id == get_current_app_id()
+		_set_invite_state(friend_steam_id, InviteState.INVITED, {"invited_while_in_game": invited_while_in_game})
 		_emit_debug("[SteamManager] Invite sent to Steam ID %d." % friend_steam_id, false)
 	else:
 		_emit_debug("[SteamManager] Failed to invite Steam ID %d." % friend_steam_id, true)
@@ -472,11 +479,17 @@ func _emit_debug(message: String, is_error: bool) -> void:
 		print(message)
 	debug_message.emit(message, is_error)
 
-func _set_invite_state(friend_steam_id: int, state: InviteState) -> void:
-	invited_friend_ids[friend_steam_id] = {
-		"state": state,
-		"updated_at": int(Time.get_unix_time_from_system())
-	}
+func _set_invite_state(friend_steam_id: int, state: InviteState, extra: Dictionary = {}) -> void:
+	var next_info: Dictionary = {}
+	if invited_friend_ids.has(friend_steam_id):
+		var current_info: Variant = invited_friend_ids[friend_steam_id]
+		if current_info is Dictionary:
+			next_info = (current_info as Dictionary).duplicate(true)
+	next_info["state"] = state
+	next_info["updated_at"] = int(Time.get_unix_time_from_system())
+	for key in extra.keys():
+		next_info[key] = extra[key]
+	invited_friend_ids[friend_steam_id] = next_info
 	var friend_name: String = "Steam ID %d" % friend_steam_id
 	if steam_ready and _steam != null:
 		friend_name = str(_steam.call("getFriendPersonaName", friend_steam_id))

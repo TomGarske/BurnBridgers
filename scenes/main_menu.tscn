@@ -3,6 +3,74 @@
 [ext_resource type="Script" uid="uid://3jcvv2rri2bc" path="res://scripts/main_menu.gd" id="1_main_menu"]
 [ext_resource type="Script" uid="uid://nx1ihqstq1si" path="res://scripts/burning_bridge.gd" id="2_burning_bridge"]
 
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_menu_panel"]
+bg_color = Color(0.0627451, 0.0862745, 0.133333, 0.84)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.262745, 0.388235, 0.580392, 0.62)
+shadow_size = 16
+shadow_color = Color(0, 0, 0, 0.35)
+content_margin_left = 16.0
+content_margin_top = 14.0
+content_margin_right = 16.0
+content_margin_bottom = 14.0
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_normal"]
+bg_color = Color(0.117647, 0.160784, 0.239216, 0.95)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.27451, 0.423529, 0.654902, 0.82)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_hover"]
+bg_color = Color(0.164706, 0.235294, 0.352941, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.4, 0.643137, 1, 1)
+shadow_size = 6
+shadow_color = Color(0.14902, 0.380392, 0.65098, 0.4)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_pressed"]
+bg_color = Color(0.0941176, 0.129412, 0.196078, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.27451, 0.423529, 0.654902, 0.9)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_input"]
+bg_color = Color(0.054902, 0.0784314, 0.121569, 0.92)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.235294, 0.356863, 0.541176, 0.8)
+
 [node name="MainMenu" type="Control" unique_id=391934863]
 layout_mode = 3
 anchors_preset = 15
@@ -14,6 +82,16 @@ script = ExtResource("1_main_menu")
 
 [node name="BurningBridge" type="CanvasLayer" parent="." unique_id=1677095546]
 script = ExtResource("2_burning_bridge")
+
+[node name="BackdropTint" type="ColorRect" parent="." unique_id=85751224]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.0196078, 0.027451, 0.0431373, 0.34)
+mouse_filter = 2
 
 [node name="VersionLabel" type="Label" parent="." unique_id=169532133]
 layout_mode = 1
@@ -28,6 +106,7 @@ theme_override_font_sizes/font_size = 14
 text = "vdev"
 horizontal_alignment = 2
 vertical_alignment = 1
+theme_override_colors/font_color = Color(0.678431, 0.768627, 0.898039, 0.95)
 
 [node name="LeftMenuPanel" type="PanelContainer" parent="." unique_id=7481326]
 layout_mode = 1
@@ -39,6 +118,7 @@ offset_top = -180.0
 offset_right = 300.0
 offset_bottom = 180.0
 grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_menu_panel")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="LeftMenuPanel" unique_id=1443276902]
 layout_mode = 2
@@ -51,10 +131,24 @@ alignment = 1
 layout_mode = 2
 text = "BURN BRIDGERS"
 horizontal_alignment = 1
+theme_override_font_sizes/font_size = 30
+theme_override_colors/font_color = Color(0.937255, 0.964706, 1, 1)
+
+[node name="Tagline" type="Label" parent="LeftMenuPanel/VBoxContainer" unique_id=247180099]
+layout_mode = 2
+text = "Squad tactics in a burning world"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(0.631373, 0.733333, 0.866667, 0.95)
 
 [node name="HostButton" type="Button" parent="LeftMenuPanel/VBoxContainer" unique_id=1462478616]
 layout_mode = 2
 text = "Host Game"
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 15
 
 [node name="Separator" type="HSeparator" parent="LeftMenuPanel/VBoxContainer" unique_id=1608539323]
 layout_mode = 2
@@ -62,10 +156,20 @@ layout_mode = 2
 [node name="TestButton" type="Button" parent="LeftMenuPanel/VBoxContainer" unique_id=1107888195]
 layout_mode = 2
 text = "Test (Offline)"
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 15
 
 [node name="ExitButton" type="Button" parent="LeftMenuPanel/VBoxContainer" unique_id=597697900]
 layout_mode = 2
 text = "Exit"
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 15
 
 [node name="RightLobbyPanel" type="PanelContainer" parent="." unique_id=856532468]
 layout_mode = 1
@@ -80,6 +184,7 @@ offset_right = -20.0
 offset_bottom = 200.0
 grow_horizontal = 0
 grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_menu_panel")
 
 [node name="VBoxContainer" type="VBoxContainer" parent="RightLobbyPanel" unique_id=587421955]
 layout_mode = 2
@@ -89,14 +194,25 @@ theme_override_constants/separation = 8
 layout_mode = 2
 text = "Join Game"
 horizontal_alignment = 1
+theme_override_font_sizes/font_size = 24
+theme_override_colors/font_color = Color(0.937255, 0.964706, 1, 1)
 
 [node name="JoinLobbyIdInput" type="LineEdit" parent="RightLobbyPanel/VBoxContainer" unique_id=1339839877]
 layout_mode = 2
 placeholder_text = "Enter Lobby ID"
+theme_override_styles/normal = SubResource("StyleBoxFlat_input")
+theme_override_styles/focus = SubResource("StyleBoxFlat_input")
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_colors/font_placeholder_color = Color(0.56, 0.64, 0.77, 0.85)
 
 [node name="ConfirmJoinButton" type="Button" parent="RightLobbyPanel/VBoxContainer" unique_id=469737823]
 layout_mode = 2
 text = "Connect"
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 14
 
 [node name="Separator1" type="HSeparator" parent="RightLobbyPanel/VBoxContainer" unique_id=1749935040]
 layout_mode = 2
@@ -105,15 +221,22 @@ layout_mode = 2
 layout_mode = 2
 text = "Public BurnBridgers Lobbies"
 horizontal_alignment = 1
+theme_override_colors/font_color = Color(0.788235, 0.858824, 0.960784, 1)
 
 [node name="RefreshLobbiesButton" type="Button" parent="RightLobbyPanel/VBoxContainer" unique_id=1678034002]
 layout_mode = 2
 text = "Refresh Lobbies"
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 14
 
 [node name="LobbyListStatus" type="Label" parent="RightLobbyPanel/VBoxContainer" unique_id=378713310]
 layout_mode = 2
 text = "Searching for BurnBridgers lobbies..."
 autowrap_mode = 2
+theme_override_colors/font_color = Color(0.678431, 0.768627, 0.898039, 0.95)
 
 [node name="LobbyListScroll" type="ScrollContainer" parent="RightLobbyPanel/VBoxContainer" unique_id=965262630]
 custom_minimum_size = Vector2(0, 250)
@@ -148,6 +271,16 @@ theme_override_constants/margin_bottom = 8
 [node name="DebugLog" type="RichTextLabel" parent="DebugPanel/MarginContainer" unique_id=55270191]
 custom_minimum_size = Vector2(0, 180)
 layout_mode = 2
+
+[node name="QuitConfirmDialog" type="ConfirmationDialog" parent="." unique_id=194292367]
+title = "Confirm Quit"
+ok_button_text = "Yes, I quit"
+dialog_text = "You are giving up already? BurnBridgers believes in comebacks.\n\nQuit anyway?"
+initial_position = 1
+
+[node name="MenuMusicPlayer" type="AudioStreamPlayer" parent="." unique_id=1812440930]
+autoplay = false
+bus = &"Master"
 
 [connection signal="pressed" from="LeftMenuPanel/VBoxContainer/HostButton" to="." method="_on_host_button_pressed"]
 [connection signal="pressed" from="LeftMenuPanel/VBoxContainer/TestButton" to="." method="_on_test_button_pressed"]

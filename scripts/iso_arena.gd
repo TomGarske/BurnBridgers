@@ -59,12 +59,15 @@ const _KEYS    := {l = KEY_LEFT, r = KEY_RIGHT, u = KEY_UP, d = KEY_DOWN, a = KE
 const _ACTIONS := {left = "ia_l", right = "ia_r", up = "ia_u", down = "ia_d", atk = "ia_a"}
 
 # ── State ─────────────────────────────────────────────────────────────────────
+@onready var quit_game_button: Button = $UILayer/QuitGameButton
+
 var _players:   Array = []
 var _my_index:  int   = 0    # which player in _players this peer controls
 var _winner:    int   = -2   # -2 = playing, -1 = draw, 0+ = index of winner
 var _end_timer: float = 0.0
 var _origin:    Vector2      # screen anchor: world (0,0) maps here
 var _terrain:   Array = []   # _terrain[tx][ty] = terrain type int
+var _allow_last_player_win: bool = true
 
 # ── Spawn positions (world units, well inside the arena) ──────────────────────
 const _SPAWNS: Array = [
@@ -81,6 +84,10 @@ func _ready() -> void:
 	_origin = Vector2(vp.x * 0.5, vp.y * 0.08)
 	_generate_map()
 	_spawn_players()
+	_allow_last_player_win = _players.size() > 1
+	if quit_game_button != null and not quit_game_button.pressed.is_connected(_on_quit_game_button_pressed):
+		quit_game_button.pressed.connect(_on_quit_game_button_pressed)
+	quit_game_button.grab_focus()
 	queue_redraw()
 
 # ── Map generation ────────────────────────────────────────────────────────────
@@ -240,13 +247,13 @@ func _spawn_players() -> void:
 # ── Game loop ─────────────────────────────────────────────────────────────────
 func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("ui_cancel"):
-		get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+		_return_to_main_menu()
 		return
 
 	if _winner != -2:
 		_end_timer += delta
 		if _end_timer >= END_DELAY:
-			get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+			_return_to_main_menu()
 		queue_redraw()
 		return
 
@@ -375,6 +382,8 @@ func _check_hit(attacker: Dictionary, defender: Dictionary) -> void:
 func _check_win() -> void:
 	if _winner != -2:
 		return
+	if not _allow_last_player_win:
+		return
 	var alive_count := 0
 	var last_alive  := -1
 	for i in range(_players.size()):
@@ -385,6 +394,12 @@ func _check_win() -> void:
 		_winner = -1
 	elif alive_count == 1:
 		_winner = last_alive
+
+func _on_quit_game_button_pressed() -> void:
+	_return_to_main_menu()
+
+func _return_to_main_menu() -> void:
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 # ── Draw ──────────────────────────────────────────────────────────────────────
 func _draw() -> void:
