@@ -22,6 +22,7 @@ var _lobby_members_updated_handler: Callable
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	lobby_id_label.text = "Lobby ID: %d" % SteamManager.lobby_id
+	_configure_navigation()
 
 	# Only the host sees the Start button
 	start_button.visible = SteamManager.is_host
@@ -43,6 +44,18 @@ func _ready() -> void:
 	handshake_status_label.text = SteamManager.get_handshake_status_row()
 	_refresh_player_list(0)
 	_refresh_online_friends()
+
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel"):
+		_leave_lobby_and_return_to_menu()
+		get_viewport().set_input_as_handled()
+
+func _configure_navigation() -> void:
+	ready_button.focus_neighbor_bottom = ready_button.get_path_to(start_button if start_button.visible else back_button)
+	start_button.focus_neighbor_top = start_button.get_path_to(ready_button)
+	start_button.focus_neighbor_bottom = start_button.get_path_to(back_button)
+	back_button.focus_neighbor_top = back_button.get_path_to(start_button if start_button.visible else ready_button)
+	(ready_button if ready_button.visible else back_button).grab_focus()
 
 func _exit_tree() -> void:
 	if SteamManager == null:
@@ -113,13 +126,19 @@ func _refresh_online_friends() -> void:
 		invite_note_label.text = "Invites should appear as BurnBridgers (App ID %d)." % app_id
 
 	var online_friends: Array[Dictionary] = SteamManager.get_online_friends()
-	if online_friends.is_empty():
+	var in_game_friends: Array[Dictionary] = []
+	for friend in online_friends:
+		var friend_game_app_id: int = int(friend.get("game_app_id", 0))
+		if app_id > 0 and friend_game_app_id == app_id:
+			in_game_friends.append(friend)
+
+	if in_game_friends.is_empty():
 		var empty_label := Label.new()
-		empty_label.text = "No online Steam friends available to invite."
+		empty_label.text = "No friends currently in BurnBridgers."
 		friends_list.add_child(empty_label)
 		return
 
-	for friend in online_friends:
+	for friend in in_game_friends:
 		var row := HBoxContainer.new()
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -137,9 +156,6 @@ func _refresh_online_friends() -> void:
 		var invite_state: SteamManager.InviteState = SteamManager.InviteState.INVITED
 		if has_invite_state:
 			invite_state = SteamManager.get_invite_state(friend_id)
-		var friend_game_app_id: int = int(friend.get("game_app_id", 0))
-		if friend_game_app_id > 0 and friend_game_app_id != SteamManager.get_current_app_id():
-			friend_status = "In Other Game"
 		status_label.text = friend_status
 		status_label.custom_minimum_size = Vector2(120, 0)
 		row.add_child(status_label)
@@ -155,8 +171,6 @@ func _refresh_online_friends() -> void:
 			invite_button.text = "Joining"
 		elif friend_status == "In Lobby":
 			invite_button.text = "Joined"
-		elif friend_status == "In Other Game":
-			invite_button.text = "Invite Anyway"
 		elif has_invite_state and invite_state == SteamManager.InviteState.FAILED:
 			invite_button.text = "Retry Invite"
 		invite_button.pressed.connect(_on_invite_friend_pressed.bind(friend_id))

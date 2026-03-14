@@ -11,12 +11,25 @@ extends Control
 @onready var lobby_list_status: Label = $RightLobbyPanel/VBoxContainer/LobbyListStatus
 @onready var lobby_list: VBoxContainer = $RightLobbyPanel/VBoxContainer/LobbyListScroll/LobbyList
 @onready var version_label: Label = $VersionLabel
+@onready var quit_confirm_dialog: ConfirmationDialog = $QuitConfirmDialog
+@onready var menu_music_player: AudioStreamPlayer = $MenuMusicPlayer
+
+var _music_playback: AudioStreamGeneratorPlayback = null
+var _music_phase: float = 0.0
+var _music_time: float = 0.0
+
+const _MUSIC_SAMPLE_RATE: float = 44100.0
+const _MUSIC_STEP_SECONDS: float = 0.40
+const _MUSIC_MELODY: Array[float] = [261.63, 329.63, 392.00, 329.63, 293.66, 392.00, 523.25, 392.00]
 
 # ---------------------------------------------------------------------------
 # Lifecycle
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	_update_version_label()
+	_configure_navigation()
+	_setup_menu_music()
+
 	if SteamManager == null:
 		push_error("[MainMenu] SteamManager autoload missing.")
 	else:
@@ -33,16 +46,53 @@ func _ready() -> void:
 			call_deferred("_on_lobby_ready", SteamManager.lobby_id)
 	
 	refresh_lobbies_button.pressed.connect(_on_refresh_lobbies_pressed)
+	if not quit_confirm_dialog.confirmed.is_connected(_on_quit_confirmed):
+		quit_confirm_dialog.confirmed.connect(_on_quit_confirmed)
 
 	DebugOverlay.log_message("[MainMenu] Ready.")
 	if SteamManager != null:
 		_refresh_lobby_browser()
+
+func _process(_delta: float) -> void:
+	_stream_menu_music()
 
 func _update_version_label() -> void:
 	if version_label == null:
 		return
 	var version: String = str(ProjectSettings.get_setting("application/config/version", "dev"))
 	version_label.text = version
+
+func _configure_navigation() -> void:
+	host_button.focus_neighbor_bottom = host_button.get_path_to($LeftMenuPanel/VBoxContainer/TestButton)
+	$LeftMenuPanel/VBoxContainer/TestButton.focus_neighbor_top = $LeftMenuPanel/VBoxContainer/TestButton.get_path_to(host_button)
+	$LeftMenuPanel/VBoxContainer/TestButton.focus_neighbor_bottom = $LeftMenuPanel/VBoxContainer/TestButton.get_path_to($LeftMenuPanel/VBoxContainer/ExitButton)
+	$LeftMenuPanel/VBoxContainer/ExitButton.focus_neighbor_top = $LeftMenuPanel/VBoxContainer/ExitButton.get_path_to($LeftMenuPanel/VBoxContainer/TestButton)
+	$LeftMenuPanel/VBoxContainer/ExitButton.focus_neighbor_bottom = $LeftMenuPanel/VBoxContainer/ExitButton.get_path_to(host_button)
+	host_button.grab_focus()
+
+func _setup_menu_music() -> void:
+	if menu_music_player == null:
+		return
+	var stream := AudioStreamGenerator.new()
+	stream.mix_rate = int(_MUSIC_SAMPLE_RATE)
+	stream.buffer_length = 0.25
+	menu_music_player.stream = stream
+	menu_music_player.volume_db = -16.0
+	menu_music_player.play()
+	_music_playback = menu_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
+
+func _stream_menu_music() -> void:
+	if _music_playback == null:
+		return
+	var frames_available: int = _music_playback.get_frames_available()
+	for _i in range(frames_available):
+		var note_index: int = int(floor(_music_time / _MUSIC_STEP_SECONDS)) % _MUSIC_MELODY.size()
+		var freq: float = _MUSIC_MELODY[note_index]
+		_music_phase += TAU * freq / _MUSIC_SAMPLE_RATE
+		var harmonic: float = sin(_music_phase * 2.0) * 0.35
+		var sample: float = (sin(_music_phase) + harmonic) * 0.08
+		_music_playback.push_frame(Vector2(sample, sample))
+		_music_time += 1.0 / _MUSIC_SAMPLE_RATE
 
 func _exit_tree() -> void:
 	if SteamManager == null:
@@ -74,9 +124,19 @@ func _on_confirm_join_button_pressed() -> void:
 		DebugOverlay.log_message("[MainMenu] Invalid lobby ID entered.", true)
 
 func _on_test_button_pressed() -> void:
+	if SteamManager != null and SteamManager.lobby_id != 0:
+		SteamManager.leave_lobby()
+	if multiplayer.multiplayer_peer != null:
+		multiplayer.multiplayer_peer.close()
+		multiplayer.multiplayer_peer = null
+	GameManager.setup_offline_test()
 	get_tree().change_scene_to_file(GameManager.MATCH_SCENE_PATH)
 
 func _on_exit_button_pressed() -> void:
+	quit_confirm_dialog.dialog_text = "You are giving up already? BurnBridgers believes in comebacks.\n\nQuit anyway?"
+	quit_confirm_dialog.popup_centered()
+
+func _on_quit_confirmed() -> void:
 	get_tree().quit()
 
 # ---------------------------------------------------------------------------
