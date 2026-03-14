@@ -67,3 +67,11 @@ func _on_peer_disconnected(peer_id: int) -> void:
 func reset() -> void:
 	players.clear()
 	match_phase = MatchPhase.LOBBY
+
+## Populates two local test players for offline development — no Steam required.
+func setup_offline_test() -> void:
+	players.clear()
+	players[1] = {"steam_id": 0, "username": "Player 1 (Test)", "team": 0}
+	players[2] = {"steam_id": 0, "username": "Player 2 (Test)", "team": 1}
+	match_phase = MatchPhase.IN_MATCH
+	print("[GameManager] Offline test mode: 2 players registered.")

@@ -33,6 +33,10 @@ func _on_confirm_join_button_pressed() -> void:
 	else:
 		push_warning("[MainMenu] Invalid lobby ID entered.")
 
+func _on_test_button_pressed() -> void:
+	GameManager.setup_offline_test()
+	get_tree().change_scene_to_file("res://scenes/game/tactical_map.tscn")
+
 func _on_exit_button_pressed() -> void:
 	get_tree().quit()
 
