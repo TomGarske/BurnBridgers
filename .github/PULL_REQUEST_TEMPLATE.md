@@ -1,11 +1,4 @@
-## Problem
-Describe what problem this PR solves.
-
-## Architecture Impact
-- Classification: `Type A` / `Type B` / `Type C` / `Type D`
-- Affected boundaries/subsystems:
-- Why this is ADR-compliant:
-
-## Risks / Follow-ups
-- Residual risk:
-- Follow-up tasks:
+## What Changed
+- Summarize the key code and behavior changes in this PR.
+- Note any user-visible UI/UX updates.
+- List any follow-up changes that still need to be done (optional).
