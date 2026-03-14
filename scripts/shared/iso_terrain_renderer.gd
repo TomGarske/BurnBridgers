@@ -31,6 +31,12 @@ const _SPRITE_MAP: Dictionary = {
 	T_SNOW:   [1, 1],
 }
 
+# Height in tile_h units per terrain type (T_DEEP … T_SNOW)
+const _TILE_ELEV: Array = [0, 0, 0, 0, 1, 2, 3]
+
+# Inset src_rect slightly to prevent linear-filter bleeding between sheet tiles
+const _SP_INSET: float = 0.5
+
 const _TC: Array = [
 	[Color(0.05, 0.12, 0.44), Color(0.02, 0.06, 0.26)],  # deep water
 	[Color(0.12, 0.28, 0.68), Color(0.07, 0.16, 0.42)],  # shallow water
@@ -105,16 +111,39 @@ func draw_tiles(canvas: CanvasItem, origin: Vector2, viewport: Vector2, tile_w: 
 			_draw_tile(canvas, origin, tile_w, tile_h, tx, diag - tx)
 
 func _draw_tile(canvas: CanvasItem, origin: Vector2, tile_w: float, tile_h: float, tx: int, ty: int) -> void:
-	var top := _w2s(origin, tile_w, tile_h, tx + 0.5, float(ty))
-
 	var tt: int = _get_tile(tx, ty)
+	var elev: int = _TILE_ELEV[tt]
+	var lift := Vector2(0.0, elev * tile_h)
 
-	# All terrain types now have sprites
+	# Base diamond points (ground level)
+	var rgt_b := _w2s(origin, tile_w, tile_h, float(tx + 1), ty + 0.5)
+	var bot_b := _w2s(origin, tile_w, tile_h, tx + 0.5, float(ty + 1))
+	var lft_b := _w2s(origin, tile_w, tile_h, float(tx), ty + 0.5)
+
+	# Elevated diamond points
+	var top_e := _w2s(origin, tile_w, tile_h, tx + 0.5, float(ty)) - lift
+	var rgt_e := rgt_b - lift
+	var bot_e := bot_b - lift
+	var lft_e := lft_b - lift
+
+	# Side faces for elevated terrain
+	if elev > 0:
+		var tc: Array = _TC[tt]
+		canvas.draw_polygon(
+			PackedVector2Array([lft_e, bot_e, bot_b, lft_b]),
+			PackedColorArray([tc[1], tc[1], tc[1], tc[1]]))
+		var rc: Color = tc[1].darkened(0.2)
+		canvas.draw_polygon(
+			PackedVector2Array([rgt_e, bot_e, bot_b, rgt_b]),
+			PackedColorArray([rc, rc, rc, rc]))
+
+	# Sprite on top (inset src_rect to prevent linear-filter colour bleeding)
 	var info: Array = _SPRITE_MAP[tt]
-	var src  := Rect2(info[1] * _SP_W, info[0] * _SP_H, _SP_W, _SP_H)
+	var src  := Rect2(info[1] * _SP_W + _SP_INSET, info[0] * _SP_H + _SP_INSET,
+					  _SP_W - _SP_INSET * 2.0, _SP_H - _SP_INSET * 2.0)
 	var dw   := _SP_W * _SP_SCALE
 	var dh   := _SP_H * _SP_SCALE
-	var dest := Rect2(top.x - dw * 0.5, top.y, dw, dh)
+	var dest := Rect2(top_e.x - dw * 0.5, top_e.y, dw, dh)
 	canvas.draw_texture_rect_region(_TERRAIN_TEX, dest, src)
 
 func _w2s(origin: Vector2, tile_w: float, tile_h: float, wx: float, wy: float) -> Vector2:
@@ -193,13 +222,13 @@ func _get_tile(tx: int, ty: int) -> int:
 func _draw_fallback_tiles(canvas: CanvasItem, origin: Vector2, viewport: Vector2, tile_w: float, tile_h: float) -> void:
 	var rows: int = int(ceili(viewport.y / tile_h)) + 6
 	var cols: int = int(ceili(viewport.x / tile_w)) + 6
+	var info: Array = _SPRITE_MAP[T_GRASS]
+	var src := Rect2(info[1] * _SP_W + _SP_INSET, info[0] * _SP_H + _SP_INSET,
+					 _SP_W - _SP_INSET * 2.0, _SP_H - _SP_INSET * 2.0)
+	var dw := _SP_W * _SP_SCALE
+	var dh := _SP_H * _SP_SCALE
 	for row in range(-2, rows):
 		for col in range(-2, cols):
-			var tx: int = col
-			var ty: int = row
-			var top := _w2s(origin, tile_w, tile_h, tx + 0.5, float(ty))
-			var rgt := _w2s(origin, tile_w, tile_h, float(tx + 1), ty + 0.5)
-			var bot := _w2s(origin, tile_w, tile_h, tx + 0.5, float(ty + 1))
-			var lft := _w2s(origin, tile_w, tile_h, float(tx), ty + 0.5)
-			var color: Color = Color(0.14, 0.26, 0.18) if (tx + ty) % 2 == 0 else Color(0.11, 0.21, 0.15)
-			canvas.draw_polygon(PackedVector2Array([top, rgt, bot, lft]), PackedColorArray([color]))
+			var top := _w2s(origin, tile_w, tile_h, col + 0.5, float(row))
+			var dest := Rect2(top.x - dw * 0.5, top.y, dw, dh)
+			canvas.draw_texture_rect_region(_TERRAIN_TEX, dest, src)
