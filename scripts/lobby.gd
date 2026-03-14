@@ -25,6 +25,7 @@ const _FRIENDS_REFRESH_INTERVAL: float = 6.0
 # ---------------------------------------------------------------------------
 func _ready() -> void:
 	lobby_id_label.text = "Lobby ID: %d" % SteamManager.lobby_id
+	_enable_controller_focus()
 	_configure_navigation()
 
 	# Only the host sees the Start button
@@ -59,6 +60,11 @@ func _configure_navigation() -> void:
 	start_button.focus_neighbor_bottom = start_button.get_path_to(back_button)
 	back_button.focus_neighbor_top = back_button.get_path_to(start_button if start_button.visible else ready_button)
 	(ready_button if ready_button.visible else back_button).grab_focus()
+
+func _enable_controller_focus() -> void:
+	ready_button.focus_mode = Control.FOCUS_ALL
+	start_button.focus_mode = Control.FOCUS_ALL
+	back_button.focus_mode = Control.FOCUS_ALL
 
 func _exit_tree() -> void:
 	if SteamManager == null:
@@ -104,7 +110,7 @@ func _refresh_player_list(_peer_id: int) -> void:
 		row.add_child(label)
 		player_list.add_child(row)
 	var ready_counts: Dictionary = SteamManager.get_ready_counts()
-	lobby_status_label.text = "Lobby Members: %d/4 | Ready: %d/%d" % [member_count, int(ready_counts.get("ready", 0)), int(ready_counts.get("total", 0))]
+	lobby_status_label.text = "Lobby Members: %d/%d | Ready: %d/%d" % [member_count, GameConstants.MAX_PLAYERS, int(ready_counts.get("ready", 0)), int(ready_counts.get("total", 0))]
 	ready_button.text = "Unready" if SteamManager.local_ready else "Ready"
 
 	# Host can only start when all currently joined lobby members are ready.

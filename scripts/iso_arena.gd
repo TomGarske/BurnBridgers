@@ -1,6 +1,6 @@
 extends Node2D
 
-## Isometric arena — placeholder art, up to 4 players.
+## Isometric arena — placeholder art, up to 8 players.
 ##
 ## Controls (every player, on their own machine):
 ##   Arrow keys: move · Space: attack · Escape: main menu
@@ -20,6 +20,10 @@ const _PALETTES: Array = [
 	[Color(1.00, 0.18, 0.12), Color(1.00, 0.58, 0.42)],  # red
 	[Color(0.14, 0.76, 0.32), Color(0.52, 1.00, 0.60)],  # green
 	[Color(0.92, 0.72, 0.06), Color(1.00, 0.92, 0.44)],  # gold
+	[Color(0.70, 0.22, 0.96), Color(0.88, 0.62, 1.00)],  # purple
+	[Color(0.10, 0.80, 0.90), Color(0.50, 0.94, 1.00)],  # cyan
+	[Color(0.96, 0.52, 0.08), Color(1.00, 0.78, 0.42)],  # orange
+	[Color(0.76, 0.76, 0.80), Color(0.94, 0.94, 0.96)],  # silver
 ]
 
 # ── Physics / combat ──────────────────────────────────────────────────────────
@@ -55,15 +59,27 @@ var _terrain_renderer = TERRAIN_RENDERER_SCRIPT.new()
 
 # ── Spawn positions (world units) ─────────────────────────────────────────────
 const _SPAWNS: Array = [
-	Vector2(2.0,  2.0),
-	Vector2(10.0, 10.0),
-	Vector2(10.0,  2.0),
-	Vector2(2.0,  10.0),
+	Vector2( 2.0,  2.0),   # top-left
+	Vector2(10.0, 10.0),   # bottom-right
+	Vector2(10.0,  2.0),   # top-right
+	Vector2( 2.0, 10.0),   # bottom-left
+	Vector2( 6.0,  2.0),   # top-center
+	Vector2( 6.0, 10.0),   # bottom-center
+	Vector2( 2.0,  6.0),   # left-center
+	Vector2(10.0,  6.0),   # right-center
 ]
 
 const _MUSIC_SAMPLE_RATE: float = 44100.0
-const _MUSIC_STEP_SECONDS: float = 0.24
-const _MUSIC_MELODY: Array[float] = [261.63, 329.63, 392.0, 523.25, 392.0, 440.0, 493.88, 587.33]
+const _MUSIC_STEP_SECONDS: float = 0.22
+const _MUSIC_STEPS_PER_BAR: int = 8
+const _MUSIC_SECTION_BARS: int = 24
+const _MUSIC_VERSE: Array[float] = [164.81, 196.00, 246.94, 220.00, 196.00, 220.00, 246.94, 220.00]
+const _MUSIC_CHORUS: Array[float] = [246.94, 293.66, 329.63, 293.66, 261.63, 293.66, 329.63, 293.66]
+const _MUSIC_HYPE_A: Array[float] = [329.63, 392.00, 440.00, 392.00, 369.99, 440.00, 493.88, 440.00]
+const _MUSIC_HYPE_B: Array[float] = [293.66, 369.99, 440.00, 493.88, 440.00, 392.00, 440.00, 523.25]
+const _BASS_VERSE: Array[float] = [82.41, 98.00, 110.00, 98.00]
+const _BASS_CHORUS: Array[float] = [123.47, 146.83, 164.81, 146.83]
+const _BASS_HYPE: Array[float] = [146.83, 164.81, 185.00, 196.00]
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -128,7 +144,12 @@ func _register_inputs() -> void:
 	_ensure_joy_motion_for_action(_ACTIONS.right, JOY_AXIS_LEFT_X, 1.0)
 	_ensure_joy_motion_for_action(_ACTIONS.up, JOY_AXIS_LEFT_Y, -1.0)
 	_ensure_joy_motion_for_action(_ACTIONS.down, JOY_AXIS_LEFT_Y, 1.0)
+	_ensure_joy_button_for_action(_ACTIONS.left, JOY_BUTTON_DPAD_LEFT)
+	_ensure_joy_button_for_action(_ACTIONS.right, JOY_BUTTON_DPAD_RIGHT)
+	_ensure_joy_button_for_action(_ACTIONS.up, JOY_BUTTON_DPAD_UP)
+	_ensure_joy_button_for_action(_ACTIONS.down, JOY_BUTTON_DPAD_DOWN)
 	_ensure_joy_button_for_action(_ACTIONS.atk, JOY_BUTTON_A)
+	_ensure_joy_button_for_action(_ACTIONS.atk, JOY_BUTTON_X)
 
 func _ensure_key_for_action(action: String, keycode: Key) -> void:
 	for event in InputMap.action_get_events(action):
@@ -183,16 +204,68 @@ func _stream_game_music() -> void:
 		return
 	var frames_available: int = _music_playback.get_frames_available()
 	for _i in range(frames_available):
-		var note_index: int = int(floor(_music_time / _MUSIC_STEP_SECONDS)) % _MUSIC_MELODY.size()
-		var freq: float = _MUSIC_MELODY[note_index]
+		var step_idx: int = int(floor(_music_time / _MUSIC_STEP_SECONDS))
+		var bar_idx: int = int(floor(float(step_idx) / _MUSIC_STEPS_PER_BAR)) % _MUSIC_SECTION_BARS
+		var step_in_bar: int = step_idx % _MUSIC_STEPS_PER_BAR
+		var bass_step: int = int(floor(_music_time / (_MUSIC_STEP_SECONDS * 2.0))) % 4
+		var section: int = _game_section_for_bar(bar_idx)
+		var freq: float = _game_lead_for_step(section, step_in_bar, bar_idx)
+		var bass_freq: float = _game_bass_for_step(section, bass_step)
+		var energy: float = _game_section_energy(section)
 		_music_phase += TAU * freq / _MUSIC_SAMPLE_RATE
-		var lead: float = sin(_music_phase)
-		var upper: float = sin(_music_phase * 1.5) * 0.24
-		var low: float = sin(_music_phase * 0.5) * 0.18
-		var pulse: float = 0.88 + 0.12 * sin(_music_time * 5.2)
-		var sample: float = (lead + upper + low) * 0.07 * pulse
+		var bass_phase: float = _music_time * TAU * bass_freq
+		var lead_square: float = 1.0 if sin(_music_phase) >= 0.0 else -1.0
+		var lead_octave: float = 1.0 if sin(_music_phase * 2.0) >= 0.0 else -1.0
+		var accent: float = sin(_music_phase * 3.0) * (0.10 + 0.15 * energy)
+		var bass_square: float = 1.0 if sin(bass_phase) >= 0.0 else -1.0
+		var pulse: float = 0.82 + 0.18 * sin(_music_time * (5.4 + energy * 2.2))
+		var gate_phase: float = fmod(_music_time, _MUSIC_STEP_SECONDS) / _MUSIC_STEP_SECONDS
+		var gate: float = 0.94 - gate_phase * (0.18 - energy * 0.04)
+		var sample: float = (lead_square * (0.040 + energy * 0.020) + lead_octave * (0.022 + energy * 0.012) + accent * 0.024 + bass_square * (0.020 + energy * 0.012)) * pulse * gate
 		_music_playback.push_frame(Vector2(sample, sample))
 		_music_time += 1.0 / _MUSIC_SAMPLE_RATE
+
+func _game_section_for_bar(bar_idx: int) -> int:
+	if bar_idx < 4:
+		return 0 # verse
+	if bar_idx < 8:
+		return 1 # chorus
+	if bar_idx < 16:
+		return 2 # hype
+	if bar_idx < 20:
+		return 1 # chorus return
+	return 3 # final hype
+
+func _game_section_energy(section: int) -> float:
+	match section:
+		0:
+			return 0.72
+		1:
+			return 0.88
+		2:
+			return 1.0
+		_:
+			return 1.08
+
+func _game_lead_for_step(section: int, step_in_bar: int, bar_idx: int) -> float:
+	match section:
+		0:
+			return _MUSIC_VERSE[step_in_bar]
+		1:
+			return _MUSIC_CHORUS[step_in_bar]
+		2:
+			return _MUSIC_HYPE_A[step_in_bar] if bar_idx % 2 == 0 else _MUSIC_HYPE_B[step_in_bar]
+		_:
+			return _MUSIC_HYPE_B[step_in_bar]
+
+func _game_bass_for_step(section: int, bass_step: int) -> float:
+	match section:
+		0:
+			return _BASS_VERSE[bass_step]
+		1:
+			return _BASS_CHORUS[bass_step]
+		_:
+			return _BASS_HYPE[bass_step]
 
 # ── Player spawning ───────────────────────────────────────────────────────────
 func _spawn_players() -> void:
@@ -319,6 +392,14 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 	if Input.is_action_pressed(_ACTIONS.right): move.x += 1.0
 	if Input.is_action_pressed(_ACTIONS.up):    move.y -= 1.0
 	if Input.is_action_pressed(_ACTIONS.down):  move.y += 1.0
+	var pad_id: int = _get_primary_pad_id()
+	if pad_id >= 0:
+		var stick_input := Vector2(
+			Input.get_joy_axis(pad_id, JOY_AXIS_LEFT_X),
+			Input.get_joy_axis(pad_id, JOY_AXIS_LEFT_Y)
+		)
+		if stick_input.length() > 0.22:
+			move = stick_input
 
 	if move.length_squared() > 0.0:
 		move         = move.normalized()
@@ -540,12 +621,14 @@ func _draw_player(p: Dictionary) -> void:
 
 # ── HUD ───────────────────────────────────────────────────────────────────────
 func _draw_hud(vp: Vector2) -> void:
-	var font    := ThemeDB.fallback_font
-	var bar_h   := 20.0
-	var bar_w   := minf(vp.x * 0.20, 200.0)
-	var pad     := 14.0
-	var spacing := bar_w + pad
-	var status_y: float = pad + bar_h + 18.0
+	var font       := ThemeDB.fallback_font
+	var bar_h      := 20.0
+	var pad        := 14.0
+	const MAX_COLS := 4
+	var bar_w      := minf((vp.x - pad * (MAX_COLS + 1)) / MAX_COLS, 200.0)
+	var spacing    := bar_w + pad
+	var row_stride := bar_h + 8.0
+	var status_y   := pad + row_stride * 2.0 + 10.0
 
 	for i in range(_status_messages.size()):
 		var entry: Dictionary = _status_messages[i]
@@ -561,8 +644,10 @@ func _draw_hud(vp: Vector2) -> void:
 
 	for i in range(_players.size()):
 		var p: Dictionary = _players[i]
-		var bx := pad + i * spacing
-		var by := pad
+		var col_idx: int = i % MAX_COLS
+		var row_idx: int = i / MAX_COLS
+		var bx := pad + col_idx * spacing
+		var by := pad + row_idx * row_stride
 		var fill := bar_w * clampf(p.health / MAX_HP, 0.0, 1.0)
 		var col: Color = p.palette[0]
 
@@ -597,3 +682,9 @@ func _draw_win_screen(vp: Vector2) -> void:
 	draw_string(font, Vector2(cx, cy + 62.0),
 			"Returning to menu in %d..." % remaining,
 			HORIZONTAL_ALIGNMENT_CENTER, -1, 20, Color(0.8, 0.8, 0.8))
+
+func _get_primary_pad_id() -> int:
+	var pads: PackedInt32Array = Input.get_connected_joypads()
+	if pads.is_empty():
+		return -1
+	return int(pads[0])
