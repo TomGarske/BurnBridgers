@@ -11,5 +11,6 @@ For non-trivial work:
 5. Include architecture compliance notes in summaries/reviews.
 6. Create a short-lived branch from `main` before implementing material changes.
 7. After pushing that branch, immediately create a PR targeting `main` unless explicitly instructed not to.
+8. Create the PR via a real command/API call (for example `gh pr create`) and return the real PR URL.
 
 Never silently implement ADR-conflicting architecture changes.

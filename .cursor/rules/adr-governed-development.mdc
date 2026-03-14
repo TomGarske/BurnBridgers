@@ -198,7 +198,8 @@ Rules:
 3. Architecture-sensitive changes should include ADR changes in the same branch when possible
 4. If architecture needs discussion first, open an `adr/*` branch and merge ADR before implementation
 5. After pushing a short-lived branch, immediately open a PR to `main` unless explicitly instructed not to
-6. PR body must satisfy required metadata fields and include ADR references/classification
+6. Create PRs using an actual command/API call (for example `gh pr create`) and return the real PR URL
+7. PR body must satisfy required metadata fields and include ADR references/classification
 
 Branch intent:
 
