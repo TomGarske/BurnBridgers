@@ -55,6 +55,7 @@ func _ready() -> void:
 	_update_version_label()
 	_apply_warm_tactical_theme()
 	_setup_menu_navigation()
+	_setup_controller_debug_line()
 	_setup_menu_music()
 	_sync_music_toggle()
 	_apply_music_enabled_state()
