@@ -85,6 +85,9 @@ func _on_exit_button_pressed() -> void:
 # Lobby ready callback
 # ---------------------------------------------------------------------------
 func _on_lobby_ready(_lobby_id: int) -> void:
+	call_deferred("_do_scene_change_lobby")
+
+func _do_scene_change_lobby() -> void:
 	get_tree().change_scene_to_file("res://scenes/lobby.tscn")
 
 func _on_invite_join_requested(target_lobby_id: int) -> void:
