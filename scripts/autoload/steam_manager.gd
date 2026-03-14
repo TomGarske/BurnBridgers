@@ -72,8 +72,8 @@ func _process(_delta: float) -> void:
 		_steam.call("run_callbacks")
 		# Check if we have a pending host request that needs retry
 		if _pending_host_request and _host_retry_count < _MAX_HOST_RETRIES:
-			var now_ms: int = Time.get_ticks_msec()
-			if now_ms >= _next_host_retry_at_ms:
+			var retry_ms: int = Time.get_ticks_msec()
+			if retry_ms >= _next_host_retry_at_ms:
 				_emit_debug("[SteamManager] Retrying host lobby (attempt %d/%d)..." % [_host_retry_count + 1, _MAX_HOST_RETRIES], false)
 				_attempt_create_lobby()
 		return
@@ -587,7 +587,7 @@ func _try_initialize_steam() -> void:
 	if not Engine.has_singleton("Steam"):
 		var extension_path: String = _find_steam_extension_path()
 		if FileAccess.file_exists(extension_path):
-			var load_status: int = GDExtensionManager.load_extension(extension_path)
+			var load_status: GDExtensionManager.LoadStatus = GDExtensionManager.load_extension(extension_path)
 			_emit_debug("[SteamManager] Attempted to load GodotSteam extension (%s). Status: %d" % [extension_path, load_status], false)
 		else:
 			_emit_debug("[SteamManager] GodotSteam extension file missing. Checked: %s" % ", ".join(_STEAM_EXTENSION_CANDIDATES), true)

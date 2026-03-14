@@ -6,7 +6,7 @@ extends Node
 # GAME_OVER is set when the match ends (currently only win/draw is handled via TurnManager signal).
 # TODO: assign GAME_OVER in _on_match_over handler once end-match UI flow is implemented.
 enum MatchPhase { LOBBY, IN_MATCH, GAME_OVER }
-const MATCH_SCENE_PATH: String = "res://scenes/game/fight_scene.tscn"
+const MATCH_SCENE_PATH: String = "res://scenes/game/iso_arena.tscn"
 
 # ---------------------------------------------------------------------------
 # State

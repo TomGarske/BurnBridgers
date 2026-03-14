@@ -1,0 +1,451 @@
+extends Node2D
+
+## Isometric arena — placeholder art, up to 4 players.
+##
+## Controls (every player, on their own machine):
+##   Arrow keys: move · Space: attack · Escape: main menu
+
+# ── Isometric constants ────────────────────────────────────────────────────────
+const TILE_W  := 64.0   # diamond width in screen pixels
+const TILE_H  := 32.0   # diamond height in screen pixels
+const COLS    := 13
+const ROWS    := 13
+
+# ── Palette ───────────────────────────────────────────────────────────────────
+const _C_SKY      := Color(0.06, 0.07, 0.12)
+const _C_TILE_LO  := Color(0.20, 0.28, 0.14)   # grass dark
+const _C_TILE_HI  := Color(0.26, 0.36, 0.18)   # grass light
+const _C_TILE_SH  := Color(0.10, 0.14, 0.07)   # grass south-edge
+const _C_WATER    := Color(0.10, 0.24, 0.62)    # water face
+const _C_WATER_SH := Color(0.06, 0.14, 0.40)   # water south-edge
+const _C_MTN      := Color(0.44, 0.42, 0.40)   # mountain face
+const _C_MTN_SH   := Color(0.26, 0.24, 0.22)   # mountain south-edge
+const _C_SNOW     := Color(0.80, 0.82, 0.86)   # mountain highlight
+const _C_BORDER   := Color(0.34, 0.26, 0.14)   # border stone
+const _C_BORDER_SH:= Color(0.18, 0.13, 0.07)
+
+# Player palettes — [primary, highlight]
+const _PALETTES: Array = [
+	[Color(0.22, 0.46, 1.00), Color(0.65, 0.82, 1.00)],  # blue
+	[Color(1.00, 0.18, 0.12), Color(1.00, 0.58, 0.42)],  # red
+	[Color(0.14, 0.76, 0.32), Color(0.52, 1.00, 0.60)],  # green
+	[Color(0.92, 0.72, 0.06), Color(1.00, 0.92, 0.44)],  # gold
+]
+
+# ── Physics / combat ──────────────────────────────────────────────────────────
+const SPEED      := 5.0    # world units / sec
+const ATK_DUR    := 0.45
+const HIT_START  := 0.30
+const HIT_END    := 0.72
+const ATK_RANGE  := 1.9    # world units
+const DMG        := 25.0
+const MAX_HP     := 100.0
+const END_DELAY  := 3.0
+
+# ── Input (single shared set — each peer only controls their own character) ────
+const _KEYS    := {l = KEY_LEFT, r = KEY_RIGHT, u = KEY_UP, d = KEY_DOWN, a = KEY_SPACE}
+const _ACTIONS := {left = "ia_l", right = "ia_r", up = "ia_u", down = "ia_d", atk = "ia_a"}
+
+# ── State ─────────────────────────────────────────────────────────────────────
+var _players:   Array = []
+var _my_index:  int   = 0    # which player in _players this peer controls
+var _winner:    int   = -2   # -2 = playing, -1 = draw, 0+ = index of winner
+var _end_timer: float = 0.0
+var _origin:    Vector2      # screen anchor: world (0,0) maps here
+var _noise:     FastNoiseLite
+
+# ── Spawn positions (world units, well inside the arena) ──────────────────────
+const _SPAWNS: Array = [
+	Vector2(2.0,        2.0),
+	Vector2(COLS - 3.0, ROWS - 3.0),
+	Vector2(COLS - 3.0, 2.0),
+	Vector2(2.0,        ROWS - 3.0),
+]
+
+# ── Lifecycle ─────────────────────────────────────────────────────────────────
+func _ready() -> void:
+	_register_inputs()
+	var vp := get_viewport_rect().size
+	_origin = Vector2(vp.x * 0.5, vp.y * 0.08)
+	_noise = FastNoiseLite.new()
+	_noise.seed = randi()
+	_noise.frequency = 0.08
+	_spawn_players()
+	queue_redraw()
+
+# ── Coordinate helpers ────────────────────────────────────────────────────────
+func _w2s(wx: float, wy: float) -> Vector2:
+	return _origin + Vector2((wx - wy) * TILE_W * 0.5, (wx + wy) * TILE_H * 0.5)
+
+## Convert a world-space direction vector to a normalised screen-space direction.
+func _dir_screen(dx: float, dy: float) -> Vector2:
+	var v := Vector2((dx - dy) * TILE_W * 0.5, (dx + dy) * TILE_H * 0.5)
+	return v.normalized() if v.length_squared() > 0.001 else Vector2.DOWN
+
+# ── Input registration ────────────────────────────────────────────────────────
+func _register_inputs() -> void:
+	var pairs := {
+		_ACTIONS.left:  _KEYS.l,
+		_ACTIONS.right: _KEYS.r,
+		_ACTIONS.up:    _KEYS.u,
+		_ACTIONS.down:  _KEYS.d,
+		_ACTIONS.atk:   _KEYS.a,
+	}
+	for action: String in pairs:
+		if not InputMap.has_action(action):
+			InputMap.add_action(action)
+		else:
+			InputMap.action_erase_events(action)
+		var ev := InputEventKey.new()
+		ev.keycode = pairs[action]
+		InputMap.action_add_event(action, ev)
+
+# ── Player spawning ───────────────────────────────────────────────────────────
+func _spawn_players() -> void:
+	var peer_ids: Array[int] = []
+	var labels:   Array      = []
+
+	if SteamManager.lobby_id != 0 and GameManager.players.size() > 0:
+		for pid: int in GameManager.players:
+			peer_ids.append(pid)
+		peer_ids.sort()
+		for pid: int in peer_ids:
+			labels.append(GameManager.players[pid].get("username", "Player"))
+	else:
+		# Offline: two placeholder slots; this peer controls index 0
+		peer_ids = [1, 2]
+		labels   = ["P1", "P2"]
+
+	var count: int = mini(peer_ids.size(), _PALETTES.size())
+	var my_peer_id: int = multiplayer.get_unique_id()
+	_my_index = 0
+	for i in range(count):
+		if peer_ids[i] == my_peer_id:
+			_my_index = i
+			break
+
+	for i in range(count):
+		var start: Vector2 = _SPAWNS[i]
+		_players.append({
+			wx         = start.x,
+			wy         = start.y,
+			dir        = Vector2(1.0, 0.0) if i == 0 else Vector2(-1.0, 0.0),
+			health     = MAX_HP,
+			alive      = true,
+			atk_time   = 0.0,
+			hit_landed = false,
+			palette    = _PALETTES[i],
+			label      = labels[i],
+			walk_time  = 0.0,
+			moving     = false,
+		})
+
+# ── Game loop ─────────────────────────────────────────────────────────────────
+func _process(delta: float) -> void:
+	if Input.is_action_just_pressed("ui_cancel"):
+		get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+		return
+
+	if _winner != -2:
+		_end_timer += delta
+		if _end_timer >= END_DELAY:
+			get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+		queue_redraw()
+		return
+
+	# Only tick and send input for the character this peer owns
+	_tick_player(_players[_my_index], delta)
+	_broadcast_my_state()
+	_resolve_collisions()
+	for i in range(_players.size()):
+		for j in range(_players.size()):
+			if i != j:
+				_check_hit(_players[i], _players[j])
+	_check_win()
+	queue_redraw()
+
+# ── Per-player update (local peer only) ───────────────────────────────────────
+func _tick_player(p: Dictionary, delta: float) -> void:
+	if not p.alive:
+		return
+
+	var move := Vector2.ZERO
+	if Input.is_action_pressed(_ACTIONS.left):  move.x -= 1.0
+	if Input.is_action_pressed(_ACTIONS.right): move.x += 1.0
+	if Input.is_action_pressed(_ACTIONS.up):    move.y -= 1.0
+	if Input.is_action_pressed(_ACTIONS.down):  move.y += 1.0
+
+	if move.length_squared() > 0.0:
+		move         = move.normalized()
+		p.wx        += move.x * SPEED * delta
+		p.wy        += move.y * SPEED * delta
+		p.dir        = move
+		p.moving     = true
+		p.walk_time += delta
+	else:
+		p.moving = false
+
+	p.wx = clampf(p.wx, 0.6, COLS - 1.6)
+	p.wy = clampf(p.wy, 0.6, ROWS - 1.6)
+
+	if Input.is_action_just_pressed(_ACTIONS.atk) and p.atk_time <= 0.0:
+		p.atk_time   = ATK_DUR
+		p.hit_landed = false
+	p.atk_time = maxf(p.atk_time - delta, 0.0)
+
+# ── State broadcast ────────────────────────────────────────────────────────────
+func _broadcast_my_state() -> void:
+	if not multiplayer.has_multiplayer_peer():
+		return
+	var p: Dictionary = _players[_my_index]
+	_receive_player_state.rpc(
+		_my_index,
+		float(p.wx), float(p.wy),
+		float(p.dir.x), float(p.dir.y),
+		float(p.atk_time), float(p.health),
+		bool(p.alive), bool(p.moving), float(p.walk_time)
+	)
+
+@rpc("any_peer", "unreliable")
+func _receive_player_state(
+		idx: int,
+		wx: float, wy: float,
+		dir_x: float, dir_y: float,
+		atk_time: float, health: float,
+		alive: bool, moving: bool, walk_time: float) -> void:
+	# Ignore updates for our own character; ignore out-of-range indices
+	if idx == _my_index or idx < 0 or idx >= _players.size():
+		return
+	var p: Dictionary = _players[idx]
+	p.wx        = wx
+	p.wy        = wy
+	p.dir       = Vector2(dir_x, dir_y)
+	p.atk_time  = atk_time
+	p.health    = health
+	p.alive     = alive
+	p.moving    = moving
+	p.walk_time = walk_time
+
+# ── Collision — keep players apart ────────────────────────────────────────────
+func _resolve_collisions() -> void:
+	const MIN_DIST := 0.85
+	for i in range(_players.size()):
+		for j in range(i + 1, _players.size()):
+			var p_i: Dictionary = _players[i]
+			var p_j: Dictionary = _players[j]
+			var dx: float = float(p_j.wx) - float(p_i.wx)
+			var dy: float = float(p_j.wy) - float(p_i.wy)
+			var dist: float = sqrt(dx * dx + dy * dy)
+			if dist < MIN_DIST and dist > 0.001:
+				var push: float = (MIN_DIST - dist) * 0.5
+				var nx: float = dx / dist
+				var ny: float = dy / dist
+				p_i.wx = float(p_i.wx) - nx * push
+				p_i.wy = float(p_i.wy) - ny * push
+				p_j.wx = float(p_j.wx) + nx * push
+				p_j.wy = float(p_j.wy) + ny * push
+
+# ── Hit detection ─────────────────────────────────────────────────────────────
+func _check_hit(attacker: Dictionary, defender: Dictionary) -> void:
+	if not attacker.alive or attacker.atk_time <= 0.0 or attacker.hit_landed:
+		return
+	if not defender.alive:
+		return
+	var phase: float = 1.0 - attacker.atk_time / ATK_DUR
+	if phase < HIT_START or phase > HIT_END:
+		return
+	var dx: float = defender.wx - attacker.wx
+	var dy: float = defender.wy - attacker.wy
+	var dist := sqrt(dx * dx + dy * dy)
+	if dist > ATK_RANGE:
+		return
+	if attacker.dir.dot(Vector2(dx, dy).normalized()) < 0.25:
+		return
+	attacker.hit_landed = true
+	defender.health = maxf(defender.health - DMG, 0.0)
+	if defender.health <= 0.0:
+		defender.alive = false
+
+# ── Win condition ─────────────────────────────────────────────────────────────
+func _check_win() -> void:
+	if _winner != -2:
+		return
+	var alive_count := 0
+	var last_alive  := -1
+	for i in range(_players.size()):
+		if _players[i].alive:
+			alive_count += 1
+			last_alive   = i
+	if alive_count == 0:
+		_winner = -1
+	elif alive_count == 1:
+		_winner = last_alive
+
+# ── Draw ──────────────────────────────────────────────────────────────────────
+func _draw() -> void:
+	var vp := get_viewport_rect().size
+	draw_rect(Rect2(Vector2.ZERO, vp), _C_SKY)
+	_draw_tiles()
+
+	# Y-sort: players with lower (wx+wy) are further from camera — draw first
+	var sorted := _players.duplicate()
+	sorted.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return (a.wx + a.wy) < (b.wx + b.wy))
+	for p in sorted:
+		_draw_player(p)
+
+	_draw_hud(vp)
+	if _winner != -2:
+		_draw_win_screen(vp)
+
+# ── Tile drawing ──────────────────────────────────────────────────────────────
+## Diagonal draw order ensures correct painter's-algorithm depth.
+func _draw_tiles() -> void:
+	for diag in range(COLS + ROWS - 1):
+		for tx in range(COLS):
+			var ty: int = diag - tx
+			if ty < 0 or ty >= ROWS:
+				continue
+			var is_border := tx == 0 or ty == 0 or tx == COLS - 1 or ty == ROWS - 1
+			_draw_tile(tx, ty, is_border)
+
+func _draw_tile(tx: int, ty: int, is_border: bool) -> void:
+	var top := _w2s(tx + 0.5, float(ty))
+	var rgt := _w2s(float(tx + 1), ty + 0.5)
+	var bot := _w2s(tx + 0.5, float(ty + 1))
+	var lft := _w2s(float(tx), ty + 0.5)
+
+	var face: Color
+	var edge: Color
+	if is_border:
+		face = _C_BORDER
+		edge = _C_BORDER_SH
+	else:
+		var n: float = _noise.get_noise_2d(tx, ty)
+		if n < -0.15:
+			# Water — flat blue with subtle shimmer via checkerboard
+			face = _C_WATER if (tx + ty) % 2 == 0 else _C_WATER.lightened(0.06)
+			edge = _C_WATER_SH
+		elif n < 0.35:
+			# Grass — two-tone checkerboard
+			face = _C_TILE_LO if (tx + ty) % 2 == 0 else _C_TILE_HI
+			edge = _C_TILE_SH
+		else:
+			# Mountain — grey base; brightest peaks get a snow cap
+			face = _C_SNOW if n > 0.55 else _C_MTN
+			edge = _C_MTN_SH
+
+	draw_polygon(PackedVector2Array([top, rgt, bot, lft]), PackedColorArray([face]))
+	draw_line(lft, bot, edge, 1.2)
+	draw_line(rgt, bot, edge, 1.2)
+
+# ── Character drawing ─────────────────────────────────────────────────────────
+func _draw_player(p: Dictionary) -> void:
+	var sp := _w2s(p.wx, p.wy)
+	var pa: Color = p.palette[0]
+	var pb: Color = p.palette[1]
+	var dim := Color(pa.r * 0.45, pa.g * 0.45, pa.b * 0.45)
+
+	# Ground shadow — squashed circle
+	draw_set_transform(sp + Vector2(0.0, 3.0), 0.0, Vector2(1.0, 0.40))
+	draw_circle(Vector2.ZERO, 15.0, Color(0.0, 0.0, 0.0, 0.40))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+	if not p.alive:
+		draw_line(sp + Vector2(-9.0, -9.0), sp + Vector2(9.0, 9.0), Color(0.7, 0.1, 0.1, 0.9), 3.5)
+		draw_line(sp + Vector2(9.0, -9.0),  sp + Vector2(-9.0, 9.0), Color(0.7, 0.1, 0.1, 0.9), 3.5)
+		return
+
+	# Walk bob
+	var bob: float = sin(p.walk_time * 9.0) * 3.5 if p.moving else 0.0
+
+	# Legs
+	draw_rect(Rect2(sp.x - 8.0, sp.y - 18.0 + bob,  7.0, 18.0), dim)
+	draw_rect(Rect2(sp.x + 1.0, sp.y - 18.0 - bob,  7.0, 18.0), dim)
+
+	# Body
+	draw_rect(Rect2(sp.x - 9.0, sp.y - 42.0, 18.0, 26.0), pa)
+	# Body shading
+	draw_rect(Rect2(sp.x - 9.0, sp.y - 42.0,  4.0, 26.0), pb)   # left highlight
+	draw_rect(Rect2(sp.x - 9.0, sp.y - 42.0, 18.0,  3.0), pb)   # top highlight
+	draw_rect(Rect2(sp.x + 5.0, sp.y - 19.0,  4.0,  3.0), pb)   # belt detail
+
+	# Head
+	draw_circle(sp + Vector2(0.0, -51.0), 10.0, pb)
+	draw_circle(sp + Vector2(0.0, -51.0), 10.0, Color(0.0, 0.0, 0.0, 0.18), false, 1.5)
+	# Face dot (shows depth/front of face subtly)
+	var fwd := _dir_screen(p.dir.x, p.dir.y) * 4.5
+	draw_circle(sp + Vector2(fwd.x, -51.0 + fwd.y * 0.5), 2.5, Color(0.0, 0.0, 0.0, 0.35))
+
+	# Weapon / attack
+	if p.atk_time > 0.0:
+		var t: float = 1.0 - float(p.atk_time) / ATK_DUR
+		var ds   := _dir_screen(p.dir.x, p.dir.y)
+		var perp := Vector2(-ds.y, ds.x)
+		var angle: float = lerp(-0.9, 0.9, t)
+		var arm  := sp + ds * 9.0 + Vector2(0.0, -32.0)
+		var tip  := arm + (ds * cos(angle) + perp * sin(angle)) * 30.0
+		# Weapon trail
+		var trail := arm + (ds * cos(angle * 0.5) + perp * sin(angle * 0.5)) * 22.0
+		draw_line(arm, trail, Color(pa.r, pa.g, pa.b, 0.30), 8.0)
+		# Blade
+		draw_line(arm, tip, Color(0.65, 0.60, 0.22), 3.5)
+		draw_circle(tip, 3.5, Color(0.88, 0.82, 0.30))
+	else:
+		# Idle arm stubs
+		var ds := _dir_screen(p.dir.x, p.dir.y)
+		draw_line(sp + Vector2(0.0, -38.0),
+				  sp + Vector2(0.0, -38.0) + ds * 8.0 + Vector2(0.0, 4.0),
+				  dim, 5.0)
+
+	# Name tag above head
+	var font := ThemeDB.fallback_font
+	draw_string(font, sp + Vector2(0.0, -66.0), p.label,
+			HORIZONTAL_ALIGNMENT_CENTER, -1, 12, Color(1.0, 1.0, 1.0, 0.88))
+
+# ── HUD ───────────────────────────────────────────────────────────────────────
+func _draw_hud(vp: Vector2) -> void:
+	var font    := ThemeDB.fallback_font
+	var bar_h   := 20.0
+	var bar_w   := minf(vp.x * 0.20, 200.0)
+	var pad     := 14.0
+	var spacing := bar_w + pad
+
+	for i in range(_players.size()):
+		var p: Dictionary = _players[i]
+		var bx := pad + i * spacing
+		var by := pad
+		var fill := bar_w * clampf(p.health / MAX_HP, 0.0, 1.0)
+		var col: Color = p.palette[0]
+
+		# Background
+		draw_rect(Rect2(bx, by, bar_w, bar_h), Color(0.08, 0.08, 0.08, 0.85))
+		# Fill
+		if p.alive and fill > 0.0:
+			draw_rect(Rect2(bx, by, fill, bar_h), col)
+		# Border
+		draw_rect(Rect2(bx, by, bar_w, bar_h), Color(1.0, 1.0, 1.0, 0.55), false, 1.5)
+		# Label
+		draw_string(font, Vector2(bx + 5.0, by + bar_h - 5.0),
+				"%s  %d" % [p.label, int(maxf(p.health, 0.0))],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color.WHITE)
+
+func _draw_win_screen(vp: Vector2) -> void:
+	draw_rect(Rect2(Vector2.ZERO, vp), Color(0.0, 0.0, 0.0, 0.58))
+	var font := ThemeDB.fallback_font
+	var cx   := vp.x * 0.5
+	var cy   := vp.y * 0.44
+
+	var msg: String
+	if _winner == -1:
+		msg = "DRAW!"
+	else:
+		msg = "%s WINS!" % _players[_winner].label
+
+	draw_string(font, Vector2(cx, cy), msg,
+			HORIZONTAL_ALIGNMENT_CENTER, -1, 52, Color(1.0, 0.88, 0.12))
+
+	var remaining := ceili(END_DELAY - _end_timer)
+	draw_string(font, Vector2(cx, cy + 62.0),
+			"Returning to menu in %d..." % remaining,
+			HORIZONTAL_ALIGNMENT_CENTER, -1, 20, Color(0.8, 0.8, 0.8))
