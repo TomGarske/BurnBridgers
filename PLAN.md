@@ -98,17 +98,6 @@ BurnBridgers/
 - Unit `health` and `grid_pos` are the only synchronized state for the POC
 - `end_turn()` client → `request_end_turn` RPC → host `_advance_turn` → `_broadcast_turn_start` RPC to all
 
-## Gitflow Branch Strategy
-- `main` — stable, tagged releases
-- `develop` — integration branch
-- Feature branches cut from `develop`:
-  - `feature/poc-scaffold` — directory structure, project.godot, .gitignore, SETUP.md, all initial scripts and scenes
-  - `feature/steam-networking` — SteamManager polish, lobby scene UI, P2P peer testing
-  - `feature/grid-map` — TileMap tileset, unit sprites, unit spawning visuals
-  - `feature/turn-manager` — TurnManager logic refinement, action validation
-  - `feature/combat` — attack RPC, health sync, win condition, game-over screen
-- Each feature branch merges to `develop` via PR; `develop` merges to `main` at POC milestones
-
 ## Success Criteria (POC)
 - Two players launch through Steam, create/join a lobby, and load the tactical map
 - Both clients display the same unit positions

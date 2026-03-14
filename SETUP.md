@@ -51,22 +51,5 @@ This file is git-ignored and must never be committed.
 - Press **F5** (Run Project) in Godot
 - To test multiplayer: run two separate exports, or use two machines on the same LAN logged into Steam
 
-## Gitflow Workflow
-```
-main         ← stable releases only
-develop      ← integration branch (PRs merge here)
-feature/xxx  ← cut from develop, PR back to develop
-```
-
-Standard workflow:
-```
-git checkout develop
-git pull origin develop
-git checkout -b feature/your-feature
-# ... make changes ...
-git push origin feature/your-feature
-# Open PR to develop on GitHub
-```
-
 ## Project Structure
 See `PLAN.md` for the full architecture overview.
