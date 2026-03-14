@@ -1,7 +1,7 @@
 extends Node2D
 const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
 
-## Isometric arena — placeholder art, up to 4 players.
+## Isometric arena — placeholder art, up to 8 players.
 ##
 ## Controls (every player, on their own machine):
 ##   Arrow keys: move · Space: attack · Escape: pause menu
@@ -21,6 +21,10 @@ const _PALETTES: Array = [
 	[Color(1.00, 0.18, 0.12), Color(1.00, 0.58, 0.42)],  # red
 	[Color(0.14, 0.76, 0.32), Color(0.52, 1.00, 0.60)],  # green
 	[Color(0.92, 0.72, 0.06), Color(1.00, 0.92, 0.44)],  # gold
+	[Color(0.70, 0.22, 0.96), Color(0.88, 0.62, 1.00)],  # purple
+	[Color(0.10, 0.80, 0.90), Color(0.50, 0.94, 1.00)],  # cyan
+	[Color(0.96, 0.52, 0.08), Color(1.00, 0.78, 0.42)],  # orange
+	[Color(0.76, 0.76, 0.80), Color(0.94, 0.94, 0.96)],  # silver
 ]
 
 # ── Physics / combat ──────────────────────────────────────────────────────────
@@ -62,10 +66,14 @@ var _terrain_renderer = TERRAIN_RENDERER_SCRIPT.new()
 
 # ── Spawn positions (world units) ─────────────────────────────────────────────
 const _SPAWNS: Array = [
-	Vector2(2.0,  2.0),
-	Vector2(10.0, 10.0),
-	Vector2(10.0,  2.0),
-	Vector2(2.0,  10.0),
+	Vector2( 2.0,  2.0),   # top-left
+	Vector2(10.0, 10.0),   # bottom-right
+	Vector2(10.0,  2.0),   # top-right
+	Vector2( 2.0, 10.0),   # bottom-left
+	Vector2( 6.0,  2.0),   # top-center
+	Vector2( 6.0, 10.0),   # bottom-center
+	Vector2( 2.0,  6.0),   # left-center
+	Vector2(10.0,  6.0),   # right-center
 ]
 
 const _MUSIC_SAMPLE_RATE: float = 44100.0
@@ -179,7 +187,12 @@ func _register_inputs() -> void:
 	_ensure_joy_motion_for_action(_ACTIONS.right, JOY_AXIS_LEFT_X, 1.0)
 	_ensure_joy_motion_for_action(_ACTIONS.up, JOY_AXIS_LEFT_Y, -1.0)
 	_ensure_joy_motion_for_action(_ACTIONS.down, JOY_AXIS_LEFT_Y, 1.0)
+	_ensure_joy_button_for_action(_ACTIONS.left, JOY_BUTTON_DPAD_LEFT)
+	_ensure_joy_button_for_action(_ACTIONS.right, JOY_BUTTON_DPAD_RIGHT)
+	_ensure_joy_button_for_action(_ACTIONS.up, JOY_BUTTON_DPAD_UP)
+	_ensure_joy_button_for_action(_ACTIONS.down, JOY_BUTTON_DPAD_DOWN)
 	_ensure_joy_button_for_action(_ACTIONS.atk, JOY_BUTTON_A)
+	_ensure_joy_button_for_action(_ACTIONS.atk, JOY_BUTTON_X)
 
 func _ensure_key_for_action(action: String, keycode: Key) -> void:
 	for event in InputMap.action_get_events(action):
@@ -442,6 +455,14 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 	if Input.is_action_pressed(_ACTIONS.right): move.x += 1.0
 	if Input.is_action_pressed(_ACTIONS.up):    move.y -= 1.0
 	if Input.is_action_pressed(_ACTIONS.down):  move.y += 1.0
+	var pad_id: int = _get_primary_pad_id()
+	if pad_id >= 0:
+		var stick_input := Vector2(
+			Input.get_joy_axis(pad_id, JOY_AXIS_LEFT_X),
+			Input.get_joy_axis(pad_id, JOY_AXIS_LEFT_Y)
+		)
+		if stick_input.length() > 0.22:
+			move = stick_input
 
 	if move.length_squared() > 0.0:
 		move         = move.normalized()
@@ -677,12 +698,14 @@ func _draw_player(p: Dictionary) -> void:
 
 # ── HUD ───────────────────────────────────────────────────────────────────────
 func _draw_hud(vp: Vector2) -> void:
-	var font    := ThemeDB.fallback_font
-	var bar_h   := 20.0
-	var bar_w   := minf(vp.x * 0.20, 200.0)
-	var pad     := 14.0
-	var spacing := bar_w + pad
-	var status_y: float = pad + bar_h + 18.0
+	var font       := ThemeDB.fallback_font
+	var bar_h      := 20.0
+	var pad        := 14.0
+	const MAX_COLS := 4
+	var bar_w      := minf((vp.x - pad * (MAX_COLS + 1)) / MAX_COLS, 200.0)
+	var spacing    := bar_w + pad
+	var row_stride := bar_h + 8.0
+	var status_y   := pad + row_stride * 2.0 + 10.0
 
 	for i in range(_status_messages.size()):
 		var entry: Dictionary = _status_messages[i]
@@ -698,8 +721,10 @@ func _draw_hud(vp: Vector2) -> void:
 
 	for i in range(_players.size()):
 		var p: Dictionary = _players[i]
-		var bx := pad + i * spacing
-		var by := pad
+		var col_idx: int = i % MAX_COLS
+		var row_idx: int = i / MAX_COLS
+		var bx := pad + col_idx * spacing
+		var by := pad + row_idx * row_stride
 		var fill := bar_w * clampf(p.health / MAX_HP, 0.0, 1.0)
 		var col: Color = p.palette[0]
 
@@ -793,3 +818,9 @@ func _draw_offscreen_indicators(vp: Vector2) -> void:
 		var label_pos := ap - dir * (ARROW_R + 10.0)
 		draw_string(font, label_pos, p.label,
 				HORIZONTAL_ALIGNMENT_CENTER, -1, 8, Color(pa.r, pa.g, pa.b, 0.90))
+
+func _get_primary_pad_id() -> int:
+	var pads: PackedInt32Array = Input.get_connected_joypads()
+	if pads.is_empty():
+		return -1
+	return int(pads[0])
