@@ -9,5 +9,7 @@ For non-trivial work:
 3. Classify request type (A/B/C/D from `AGENTS.md`).
 4. If new/superseding ADR is required, draft ADR before architecture-sensitive implementation.
 5. Include architecture compliance notes in summaries/reviews.
+6. Create a short-lived branch from `main` before implementing material changes.
+7. After pushing that branch, immediately create a PR targeting `main` unless explicitly instructed not to.
 
 Never silently implement ADR-conflicting architecture changes.

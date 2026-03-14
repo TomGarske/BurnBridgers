@@ -45,6 +45,12 @@ const _PERSONA_STATE_OFFLINE: int = 0
 const _AVATAR_MEDIUM: int = 2
 const _INVITE_TIMEOUT_SECONDS: int = 45
 const _INIT_RETRY_MS: int = 2500
+const _STEAM_EXTENSION_CANDIDATES: Array[String] = [
+	"res://addons/godotsteam/godotsteam.gdextension",
+	"res://addons/GodotSteam/godotsteam.gdextension",
+	"res://addons/godotsteam/GodotSteam.gdextension",
+	"res://addons/GodotSteam/GodotSteam.gdextension"
+]
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -454,15 +460,16 @@ func _try_initialize_steam() -> void:
 	_next_init_retry_at_ms = Time.get_ticks_msec() + _INIT_RETRY_MS
 
 	if not Engine.has_singleton("Steam"):
-		var extension_path := "res://addons/godotsteam/godotsteam.gdextension"
+		var extension_path: String = _find_steam_extension_path()
 		if FileAccess.file_exists(extension_path):
 			var load_status: int = GDExtensionManager.load_extension(extension_path)
-			_emit_debug("[SteamManager] Attempted to load GodotSteam extension. Status: %d" % load_status, false)
+			_emit_debug("[SteamManager] Attempted to load GodotSteam extension (%s). Status: %d" % [extension_path, load_status], false)
 		else:
-			_emit_debug("[SteamManager] GodotSteam extension file missing at %s" % extension_path, true)
+			_emit_debug("[SteamManager] GodotSteam extension file missing. Checked: %s" % ", ".join(_STEAM_EXTENSION_CANDIDATES), true)
 			return
 	if not Engine.has_singleton("Steam"):
 		_emit_debug("[SteamManager] Steam singleton not available after loading extension. Will retry.", true)
+		_emit_steam_environment_hints()
 		return
 
 	_steam = Engine.get_singleton("Steam")
@@ -484,6 +491,7 @@ func _try_initialize_steam() -> void:
 		verbal = "Unexpected steamInit() response type: %s" % [typeof(init_response)]
 	if not init_ok:
 		_emit_debug("[SteamManager] Steam failed to init: " + verbal + " (status=" + str(status) + "). Will retry.", true)
+		_emit_steam_environment_hints()
 		return
 
 	steam_id = int(_steam.call("getSteamID"))
@@ -519,3 +527,17 @@ func _try_initialize_steam() -> void:
 		join_lobby(queued_lobby_id)
 	# Refresh lobby browser data on successful init.
 	request_burnbridgers_lobby_list()
+
+func _find_steam_extension_path() -> String:
+	for candidate in _STEAM_EXTENSION_CANDIDATES:
+		if FileAccess.file_exists(candidate):
+			return candidate
+	# Fall back to canonical path for logs/errors.
+	return _STEAM_EXTENSION_CANDIDATES[0]
+
+func _emit_steam_environment_hints() -> void:
+	var steam_app_id: String = OS.get_environment("SteamAppId")
+	var steam_game_id: String = OS.get_environment("SteamGameId")
+	_emit_debug("[SteamManager] Env SteamAppId=%s SteamGameId=%s" % [steam_app_id, steam_game_id], true)
+	if OS.get_name() == "Linux":
+		_emit_debug("[SteamManager] Linux/Steam Deck hint: launch from Steam client OR ensure steam_appid.txt exists next to the game binary when launching outside Steam.", true)
