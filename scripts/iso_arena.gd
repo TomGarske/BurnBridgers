@@ -3,7 +3,7 @@ extends Node2D
 ## Isometric arena — placeholder art, up to 4 players.
 ##
 ## Controls (every player, on their own machine):
-##   Arrow keys: move · Space: attack · Escape: main menu
+##   Arrow keys: move · Space: attack · Escape: pause menu
 
 # ── Isometric constants ────────────────────────────────────────────────────────
 const TILE_W        := 64.0   # diamond width in screen pixels
@@ -39,6 +39,10 @@ const TERRAIN_RENDERER_SCRIPT := preload("res://scripts/shared/iso_terrain_rende
 
 # ── State ─────────────────────────────────────────────────────────────────────
 @onready var quit_game_button: Button = $UILayer/QuitGameButton
+@onready var pause_menu_panel: PanelContainer = $UILayer/PauseMenuPanel
+@onready var pause_resume_button: Button = $UILayer/PauseMenuPanel/PauseMenuMargin/PauseMenuVBox/PauseResumeButton
+@onready var pause_music_button: Button = $UILayer/PauseMenuPanel/PauseMenuMargin/PauseMenuVBox/PauseMusicButton
+@onready var pause_quit_button: Button = $UILayer/PauseMenuPanel/PauseMenuMargin/PauseMenuVBox/PauseQuitButton
 @onready var quit_confirm_dialog: ConfirmationDialog = $UILayer/QuitConfirmDialog
 @onready var game_music_player: AudioStreamPlayer = $UILayer/GameMusicPlayer
 
@@ -71,6 +75,17 @@ func _ready() -> void:
 	_origin = get_viewport_rect().size * 0.5
 	_spawn_players()
 	_setup_game_music()
+	if quit_game_button != null:
+		quit_game_button.visible = false
+	if pause_menu_panel != null:
+		pause_menu_panel.visible = false
+	if pause_resume_button != null and not pause_resume_button.pressed.is_connected(_on_pause_resume_pressed):
+		pause_resume_button.pressed.connect(_on_pause_resume_pressed)
+	if pause_music_button != null and not pause_music_button.pressed.is_connected(_on_pause_music_pressed):
+		pause_music_button.pressed.connect(_on_pause_music_pressed)
+	if pause_quit_button != null and not pause_quit_button.pressed.is_connected(_on_pause_quit_pressed):
+		pause_quit_button.pressed.connect(_on_pause_quit_pressed)
+	_update_pause_music_button_label()
 	if quit_game_button != null and not quit_game_button.pressed.is_connected(_on_quit_game_button_pressed):
 		quit_game_button.pressed.connect(_on_quit_game_button_pressed)
 	if quit_confirm_dialog != null and not quit_confirm_dialog.confirmed.is_connected(_on_quit_confirmed):
@@ -138,21 +153,23 @@ func _ensure_key_for_action(action: String, keycode: Key) -> void:
 	key_event.keycode = keycode
 	InputMap.action_add_event(action, key_event)
 
-func _ensure_joy_button_for_action(action: String, button_index: int) -> void:
+func _ensure_joy_button_for_action(action: String, button_index: int, device: int = -1) -> void:
 	for event in InputMap.action_get_events(action):
-		if event is InputEventJoypadButton and event.button_index == button_index:
+		if event is InputEventJoypadButton and event.button_index == button_index and event.device == device:
 			return
 	var button_event := InputEventJoypadButton.new()
 	button_event.button_index = button_index
+	button_event.device = device
 	InputMap.action_add_event(action, button_event)
 
-func _ensure_joy_motion_for_action(action: String, axis: JoyAxis, axis_value: float) -> void:
+func _ensure_joy_motion_for_action(action: String, axis: JoyAxis, axis_value: float, device: int = -1) -> void:
 	for event in InputMap.action_get_events(action):
-		if event is InputEventJoypadMotion and event.axis == axis and is_equal_approx(event.axis_value, axis_value):
+		if event is InputEventJoypadMotion and event.axis == axis and is_equal_approx(event.axis_value, axis_value) and event.device == device:
 			return
 	var motion_event := InputEventJoypadMotion.new()
 	motion_event.axis = axis
 	motion_event.axis_value = axis_value
+	motion_event.device = device
 	InputMap.action_add_event(action, motion_event)
 
 func _setup_game_music() -> void:
@@ -177,6 +194,12 @@ func _on_music_enabled_changed(enabled: bool) -> void:
 			_music_playback = game_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
 	else:
 		game_music_player.stop()
+	_update_pause_music_button_label()
+
+func _update_pause_music_button_label() -> void:
+	if pause_music_button == null or GameManager == null:
+		return
+	pause_music_button.text = "Music: %s" % ("On" if GameManager.music_enabled else "Off")
 
 func _stream_game_music() -> void:
 	if _music_playback == null or GameManager == null or not GameManager.music_enabled:
@@ -243,9 +266,43 @@ func _spawn_players() -> void:
 		})
 
 func _on_quit_game_button_pressed() -> void:
+	_toggle_pause_menu()
+
+func _on_pause_resume_pressed() -> void:
+	_close_pause_menu()
+
+func _on_pause_music_pressed() -> void:
+	if GameManager == null:
+		return
+	GameManager.set_music_enabled(not GameManager.music_enabled)
+	_update_pause_music_button_label()
+
+func _on_pause_quit_pressed() -> void:
 	_request_quit_to_menu()
 
+func _toggle_pause_menu() -> void:
+	if pause_menu_panel == null:
+		return
+	if pause_menu_panel.visible:
+		_close_pause_menu()
+	else:
+		_open_pause_menu()
+
+func _open_pause_menu() -> void:
+	if pause_menu_panel == null:
+		return
+	pause_menu_panel.visible = true
+	_update_pause_music_button_label()
+	if pause_resume_button != null:
+		pause_resume_button.grab_focus()
+
+func _close_pause_menu() -> void:
+	if pause_menu_panel == null:
+		return
+	pause_menu_panel.visible = false
+
 func _request_quit_to_menu() -> void:
+	_close_pause_menu()
 	if quit_confirm_dialog == null:
 		get_tree().change_scene_to_file(GameManager.MAIN_MENU_SCENE_PATH)
 		return
@@ -285,7 +342,7 @@ func _tick_status_messages(delta: float) -> void:
 func _process(delta: float) -> void:
 	_stream_game_music()
 	if Input.is_action_just_pressed("ui_cancel"):
-		_request_quit_to_menu()
+		_toggle_pause_menu()
 		return
 
 	if _winner != -2:
@@ -311,6 +368,8 @@ func _process(delta: float) -> void:
 
 # ── Per-player update (local peer only) ───────────────────────────────────────
 func _tick_player(p: Dictionary, delta: float) -> void:
+	if pause_menu_panel != null and pause_menu_panel.visible:
+		return
 	if not p.alive:
 		return
 
