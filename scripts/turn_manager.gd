@@ -79,3 +79,8 @@ func declare_match_over(winner_id: int) -> void:
 func _broadcast_match_over(winner_id: int) -> void:
 	match_over.emit(winner_id)
 	print("[TurnManager] Match over. Winner peer: %d" % winner_id)
+
+## Public shortcut for offline/test mode — bypasses the is_my_turn() check.
+func force_advance_turn() -> void:
+	if multiplayer.is_server():
+		_advance_turn()
