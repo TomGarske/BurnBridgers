@@ -4,7 +4,16 @@ extends Node2D
 # Constants
 # ---------------------------------------------------------------------------
 const UNIT_DRAW_SIZE: int = 52  # Slightly inset from tile edge
-const TEAM_COLORS: Array[Color] = [Color.CORNFLOWER_BLUE, Color.TOMATO]
+const TEAM_COLORS: Array[Color] = [
+	Color.CORNFLOWER_BLUE,    # 0 — blue
+	Color.TOMATO,             # 1 — red
+	Color(0.14, 0.76, 0.32),  # 2 — green
+	Color(0.92, 0.72, 0.06),  # 3 — gold
+	Color(0.70, 0.22, 0.96),  # 4 — purple
+	Color(0.10, 0.80, 0.90),  # 5 — cyan
+	Color(0.96, 0.52, 0.08),  # 6 — orange
+	Color(0.76, 0.76, 0.80),  # 7 — silver
+]
 
 # ---------------------------------------------------------------------------
 # Exported fields (set at spawn time by TacticalMap)
