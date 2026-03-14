@@ -38,8 +38,6 @@ func _setup_bridge() -> void:
 		call_deferred("_setup_bridge")
 		return
 	
-	print("[BurningBridge] Setting up bridge. Viewport size: ", viewport_size)
-	
 	var center_y = viewport_size.y * 0.7  # Position bridge in lower portion
 	var bridge_width = viewport_size.x * 0.8
 	var bridge_height = 80.0
@@ -61,8 +59,6 @@ func _setup_bridge() -> void:
 		Vector2(end_x, center_y + bridge_height)
 	])
 	
-	print("[BurningBridge] Bridge points set: ", _bridge_points.size(), " points")
-
 var _flame_base_positions: Array[Vector2] = []
 
 func _create_flame_particle(x: float, y: float) -> CPUParticles2D:
@@ -96,8 +92,6 @@ func _create_flame_particle(x: float, y: float) -> CPUParticles2D:
 	# Use texture for particles
 	particles.texture = _create_flame_texture()
 	
-	print("[BurningBridge] Created flame particle at ", Vector2(x, y))
-	
 	return particles
 
 func _create_flame_texture() -> Texture2D:
@@ -116,8 +110,6 @@ func _create_flame_texture() -> Texture2D:
 	
 	var texture = ImageTexture.create_from_image(image)
 	return texture
-
-var _flame_base_positions: Array[Vector2] = []
 
 func _setup_flames() -> void:
 	# Create multiple flame particle systems along the bridge
