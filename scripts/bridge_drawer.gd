@@ -2,7 +2,7 @@ extends Node2D
 
 const TILE_W: float = 64.0
 const TILE_H: float = 32.0
-const TERRAIN_RENDERER_SCRIPT := preload("res://scripts/shared/iso_terrain_renderer.gd")
+const TERRAIN_RENDERER_SCRIPT: GDScript = preload("res://scripts/shared/iso_terrain_renderer.gd")
 
 var time: float = 0.0
 var map_offset: Vector2 = Vector2.ZERO

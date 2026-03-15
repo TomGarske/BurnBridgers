@@ -258,9 +258,9 @@ func _leave_lobby_and_return_to_menu() -> void:
 	# Return to main menu
 	get_tree().change_scene_to_file(GameManager.MAIN_MENU_SCENE_PATH)
 
-func _create_avatar_rect(steam_id: int, size: int) -> TextureRect:
+func _create_avatar_rect(steam_id: int, avatar_size: int) -> TextureRect:
 	var avatar := TextureRect.new()
-	avatar.custom_minimum_size = Vector2(size, size)
+	avatar.custom_minimum_size = Vector2(avatar_size, avatar_size)
 	avatar.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
 	avatar.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	var texture: Texture2D = SteamManager.get_player_avatar_texture(steam_id)

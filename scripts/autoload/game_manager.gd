@@ -33,10 +33,10 @@ func set_music_enabled(enabled: bool) -> void:
 	music_enabled_changed.emit(music_enabled)
 
 func _ensure_controller_ui_actions() -> void:
-	_ensure_joy_button_for_action("ui_up", _UI_DPAD_UP)
-	_ensure_joy_button_for_action("ui_down", _UI_DPAD_DOWN)
-	_ensure_joy_button_for_action("ui_left", _UI_DPAD_LEFT)
-	_ensure_joy_button_for_action("ui_right", _UI_DPAD_RIGHT)
+	_ensure_joy_button_for_action("ui_up", JOY_BUTTON_DPAD_UP)
+	_ensure_joy_button_for_action("ui_down", JOY_BUTTON_DPAD_DOWN)
+	_ensure_joy_button_for_action("ui_left", JOY_BUTTON_DPAD_LEFT)
+	_ensure_joy_button_for_action("ui_right", JOY_BUTTON_DPAD_RIGHT)
 	_ensure_joy_button_for_action("ui_accept", JOY_BUTTON_A)
 	_ensure_joy_button_for_action("ui_cancel", JOY_BUTTON_B)
 	_ensure_joy_motion_for_action("ui_left", JOY_AXIS_LEFT_X, -1.0)

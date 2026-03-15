@@ -218,7 +218,7 @@ func _ensure_key_for_action(action: String, keycode: Key) -> void:
 	key_event.keycode = keycode
 	InputMap.action_add_event(action, key_event)
 
-func _ensure_joy_button_for_action(action: String, button_index: JoyButton) -> void:
+func _ensure_joy_button_for_action(action: String, button_index: JoyButton, device: int = -1) -> void:
 	for event in InputMap.action_get_events(action):
 		if event is InputEventJoypadButton and event.button_index == button_index and event.device == device:
 			return
@@ -733,6 +733,7 @@ func _draw_hud(vp: Vector2) -> void:
 	for i in range(_players.size()):
 		var p: Dictionary = _players[i]
 		var col_idx: int = i % MAX_COLS
+		@warning_ignore("integer_division")
 		var row_idx: int = i / MAX_COLS
 		var bx := pad + col_idx * spacing
 		var by := pad + row_idx * row_stride

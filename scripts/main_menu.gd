@@ -224,7 +224,8 @@ func _get_primary_pad_id() -> int:
 func _setup_controller_debug_line() -> void:
 	_controller_debug_label = Label.new()
 	_controller_debug_label.name = "ControllerDebugLine"
-	_controller_debug_label.layout_mode = 1
+	@warning_ignore("int_as_enum_without_cast", "int_as_enum_without_match")
+	_controller_debug_label.layout_mode = 1 # LayoutMode.LAYOUT_MODE_ANCHORS
 	_controller_debug_label.anchors_preset = 0
 	_controller_debug_label.offset_left = 12.0
 	_controller_debug_label.offset_top = 12.0

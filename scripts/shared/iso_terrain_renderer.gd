@@ -27,11 +27,6 @@ var _elev_noise: FastNoiseLite = null
 var _warp_noise: FastNoiseLite = null
 
 func configure_seed(seed_val: int) -> void:
-	# Keep gameplay resilient when optional terrain art is missing.
-	if ResourceLoader.exists(_TERRAIN_TEX_PATH):
-		_terrain_tex = load(_TERRAIN_TEX_PATH) as Texture2D
-	else:
-		_terrain_tex = null
 	_elev_noise = FastNoiseLite.new()
 	_elev_noise.seed               = seed_val
 	_elev_noise.noise_type         = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
@@ -118,9 +113,6 @@ func _ensure_chunk(cx: int, cy: int) -> void:
 			data[i * chunk_size + j] = t
 	_chunks[key] = data
 
-func get_tile_at(wx: float, wy: float) -> int:
-	return _get_tile(floori(wx), floori(wy))
-
 func _get_tile(tx: int, ty: int) -> int:
 	var cx: int = floori(float(tx) / chunk_size)
 	var cy: int = floori(float(ty) / chunk_size)
@@ -132,7 +124,7 @@ func _get_tile(tx: int, ty: int) -> int:
 
 func get_tile_at(wx: float, wy: float) -> int:
 	if _elev_noise == null:
-		return T_GRASS
+		return T_SAND
 	return _get_tile(floori(wx), floori(wy))
 
 func _draw_fallback_tiles(canvas: CanvasItem, origin: Vector2, viewport: Vector2, tile_w: float, tile_h: float) -> void:
