@@ -117,8 +117,17 @@ func _apply_dialog_theme() -> void:
 func _update_version_label() -> void:
 	if version_label == null:
 		return
-	var version: String = str(ProjectSettings.get_setting("application/config/version", "dev"))
-	version_label.text = version
+	var base_version: String = str(ProjectSettings.get_setting("application/config/version", "dev"))
+	var commit_hash: String = _get_runtime_commit_hash()
+	version_label.text = "%s (%s)" % [base_version, commit_hash] if not commit_hash.is_empty() else base_version
+
+func _get_runtime_commit_hash() -> String:
+	# Runtime lookup avoids repo-writing version churn from CI commits.
+	var output: Array = []
+	var exit_code: int = OS.execute("git", PackedStringArray(["rev-parse", "--short", "HEAD"]), output, true)
+	if exit_code != 0 or output.is_empty():
+		return ""
+	return str(output[0]).strip_edges()
 
 func _setup_menu_navigation() -> void:
 	host_button.focus_mode = Control.FOCUS_ALL
@@ -319,6 +328,9 @@ func _exit_tree() -> void:
 			SteamManager.lobby_list_updated.disconnect(_on_lobby_list_updated)
 	if GameManager != null and GameManager.music_enabled_changed.is_connected(_on_music_enabled_changed):
 		GameManager.music_enabled_changed.disconnect(_on_music_enabled_changed)
+	if menu_music_player != null:
+		menu_music_player.stop()
+	_music_playback = null
 
 # ---------------------------------------------------------------------------
 # Button handlers
@@ -379,6 +391,7 @@ func _apply_music_enabled_state() -> void:
 			_music_playback = menu_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
 	else:
 		menu_music_player.stop()
+		_music_playback = null
 
 func _on_quit_confirmed() -> void:
 	get_tree().quit()
