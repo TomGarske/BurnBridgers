@@ -10,6 +10,9 @@ export_presets.cfg
 # GodotSteam GDExtension binaries — installed via setup scripts
 addons/godotsteam/
 
+# LimboAI GDExtension binaries — installed via setup scripts
+addons/limboai/
+
 # Steam test app ID file — never commit
 steam_appid.txt
 
