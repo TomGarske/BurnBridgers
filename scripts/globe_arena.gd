@@ -124,12 +124,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		if key.pressed and not key.echo and key.keycode == KEY_R:
 			_reset_view()
 
-# ── Quaternion turntable rotation (no gimbal lock) ───────────────────────────
+# ── Rotate only around the tilted spin axis (no pitch / axis-tipping) ────────
 func _rotate_globe(delta: Vector2) -> void:
-	var yaw_q   := Quaternion(Vector3.UP,    deg_to_rad( delta.x * ROT_SENSITIVITY))
-	var pitch_q := Quaternion(Vector3.RIGHT, deg_to_rad( delta.y * ROT_SENSITIVITY))
-	# yaw in world space, pitch in local/screen space — matches original feel
-	_globe_quat = (yaw_q * _globe_quat * pitch_q).normalized()
+	var spin_q := Quaternion(_axial_tilt_axis, deg_to_rad(delta.x * ROT_SENSITIVITY))
+	_globe_quat = (spin_q * _globe_quat).normalized()
 
 func _apply_globe_quat() -> void:
 	_globe_root.quaternion = _globe_quat
