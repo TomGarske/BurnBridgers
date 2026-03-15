@@ -1,6 +1,6 @@
-# BurnBridgers — Windows GodotSteam setup
-# Downloads and installs the GodotSteam GDExtension plugin.
-# Requires: PowerShell 5.1+, 7-Zip or Windows tar with xz support
+# BurnBridgers — Windows addon setup
+# Downloads and installs GDExtension plugins (GodotSteam, LimboAI).
+# Requires: PowerShell 5.1+, 7-Zip or Windows tar with xz support (for GodotSteam)
 
 $ErrorActionPreference = "Stop"
 
@@ -110,11 +110,50 @@ try {
         Write-Host "Created steam_appid.txt (app ID: $($Config['STEAM_APP_ID']))"
     }
 
-    Write-Host ""
     Write-Host "GodotSteam v$Version installed successfully."
-    Write-Host "Open the project in Godot to verify."
 }
 finally {
     if (Test-Path $TmpFile) { Remove-Item $TmpFile -Force }
     if (Test-Path $TmpTar)  { Remove-Item $TmpTar  -Force }
 }
+
+# ── LimboAI GDExtension ──────────────────────────────────────────────
+$LimboVersion  = $Config["LIMBOAI_VERSION"]
+$LimboTag      = $Config["LIMBOAI_TAG"]
+$LimboArchive  = $Config["LIMBOAI_ARCHIVE"]
+$LimboBaseUrl  = $Config["LIMBOAI_BASE_URL"]
+$LimboUrl      = "$LimboBaseUrl/$LimboTag/$LimboArchive"
+$LimboDir      = Join-Path $ScriptDir "addons\limboai"
+
+$installLimbo = $true
+if (Test-Path $LimboDir) {
+    Write-Host "LimboAI already installed at $LimboDir"
+    $confirm = Read-Host "Reinstall? (y/N)"
+    if ($confirm -ne "y" -and $confirm -ne "Y") {
+        Write-Host "Skipped LimboAI."
+        $installLimbo = $false
+    } else {
+        Remove-Item -Recurse -Force $LimboDir
+    }
+}
+
+if ($installLimbo) {
+    $LimboTmp = Join-Path $env:TEMP "limboai-$LimboVersion.zip"
+
+    try {
+        Write-Host "Downloading LimboAI GDExtension v$LimboVersion..."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $LimboUrl -OutFile $LimboTmp -UseBasicParsing
+
+        Write-Host "Extracting to addons\limboai\..."
+        Expand-Archive -Path $LimboTmp -DestinationPath $ScriptDir -Force
+
+        Write-Host "LimboAI v$LimboVersion installed successfully."
+    }
+    finally {
+        if (Test-Path $LimboTmp) { Remove-Item $LimboTmp -Force }
+    }
+}
+
+Write-Host ""
+Write-Host "Setup complete. Open the project in Godot to verify."
