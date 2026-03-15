@@ -1,5 +1,6 @@
 extends Control
 const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
+const ProceduralMusicScript := preload("res://scripts/audio/procedural_music.gd")
 
 # ---------------------------------------------------------------------------
 # Node references
@@ -21,33 +22,13 @@ const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
 @onready var settings_popup: PopupPanel = $SettingsPopup
 @onready var music_toggle: CheckButton = $SettingsPopup/SettingsMargin/VBoxContainer/MusicToggle
 
-var _music_playback: AudioStreamGeneratorPlayback = null
-var _music_phase: float = 0.0
-var _music_bass_phase: float = 0.0
-var _music_time: float = 0.0
+var _music_engine = ProceduralMusicScript.new()
 var _menu_index: int = 0
 var _menu_up_prev: bool = false
 var _menu_down_prev: bool = false
 var _menu_accept_prev: bool = false
 var _menu_cancel_prev: bool = false
 var _controller_debug_label: Label = null
-
-const _MUSIC_SAMPLE_RATE: float = 44100.0
-const _MUSIC_STEP_SECONDS: float = 0.34
-const _MUSIC_STEPS_PER_CHORD: int = 8
-const _MUSIC_PROGRESS_ROOTS: Array[float] = [82.41, 69.30, 51.91, 55.00] # E, C#, G#, A
-const _MUSIC_MELODY_BY_CHORD: Array[Array] = [
-	[329.63, 369.99, 415.30, 493.88, 415.30, 369.99, 329.63, 369.99], # E
-	[277.18, 329.63, 369.99, 415.30, 369.99, 329.63, 277.18, 329.63], # C#m
-	[415.30, 369.99, 329.63, 369.99, 415.30, 493.88, 415.30, 369.99], # G#m
-	[440.00, 415.30, 369.99, 329.63, 369.99, 415.30, 440.00, 369.99], # A
-]
-const _MUSIC_CHORD_TONES: Array[Array] = [
-	[329.63, 415.30, 493.88], # E
-	[277.18, 329.63, 415.30], # C#m
-	[415.30, 493.88, 622.25], # G#m
-	[440.00, 554.37, 659.25], # A
-]
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -63,7 +44,7 @@ func _ready() -> void:
 	_apply_dialog_theme()
 
 	if SteamManager == null:
-		push_error("[MainMenu] SteamManager autoload missing.")
+		push_error("[HomeScreen] SteamManager autoload missing.")
 	else:
 		SteamManager.lobby_created.connect(_on_lobby_ready)
 		SteamManager.lobby_joined.connect(_on_lobby_ready)
@@ -74,9 +55,9 @@ func _ready() -> void:
 			host_button.tooltip_text = "Steam is not initialized. Check debug console output."
 		# If app was launched from a Steam invite and joined before menu connected, continue to lobby.
 		if SteamManager.lobby_id > 0:
-			DebugOverlay.log_message("[MainMenu] Existing lobby detected (%d). Entering lobby..." % SteamManager.lobby_id)
+			DebugOverlay.log_message("[HomeScreen] Existing lobby detected (%d). Entering lobby..." % SteamManager.lobby_id)
 			call_deferred("_on_lobby_ready", SteamManager.lobby_id)
-	
+
 	refresh_lobbies_button.pressed.connect(_on_refresh_lobbies_pressed)
 	if not quit_confirm_dialog.confirmed.is_connected(_on_quit_confirmed):
 		quit_confirm_dialog.confirmed.connect(_on_quit_confirmed)
@@ -84,7 +65,7 @@ func _ready() -> void:
 		GameManager.music_enabled_changed.connect(_on_music_enabled_changed)
 	_refresh_menu_selection()
 
-	DebugOverlay.log_message("[MainMenu] Ready.")
+	DebugOverlay.log_message("[HomeScreen] Ready.")
 	if SteamManager != null:
 		_refresh_lobby_browser()
 
@@ -283,44 +264,13 @@ func _update_controller_debug_line() -> void:
 func _setup_menu_music() -> void:
 	if menu_music_player == null:
 		return
-	var stream := AudioStreamGenerator.new()
-	stream.mix_rate = int(_MUSIC_SAMPLE_RATE)
-	stream.buffer_length = 0.25
-	menu_music_player.stream = stream
-	menu_music_player.volume_db = -16.0
-	if GameManager != null and GameManager.music_enabled:
-		menu_music_player.play()
-	_music_playback = menu_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
+	_music_engine.configure_preset("menu")
+	_music_engine.setup(menu_music_player, GameManager != null and GameManager.music_enabled)
 
 func _stream_menu_music() -> void:
-	if _music_playback == null or GameManager == null or not GameManager.music_enabled:
+	if GameManager == null:
 		return
-	var frames_available: int = _music_playback.get_frames_available()
-	for _i in range(frames_available):
-		var step_idx: int = int(floor(_music_time / _MUSIC_STEP_SECONDS))
-		var chord_idx: int = int(floor(float(step_idx) / _MUSIC_STEPS_PER_CHORD)) % _MUSIC_PROGRESS_ROOTS.size()
-		var step_in_chord: int = step_idx % _MUSIC_STEPS_PER_CHORD
-		var lead_freq: float = _music_lead_for_step(chord_idx, step_in_chord)
-		var root_freq: float = _MUSIC_PROGRESS_ROOTS[chord_idx]
-		var chord_tones: Array = _MUSIC_CHORD_TONES[chord_idx]
-		_music_phase += TAU * lead_freq / _MUSIC_SAMPLE_RATE
-		_music_bass_phase += TAU * root_freq / _MUSIC_SAMPLE_RATE
-		var lead_square: float = 1.0 if sin(_music_phase) >= 0.0 else -1.0
-		var lead_sine: float = sin(_music_phase * 0.5)
-		var bass_square: float = 1.0 if sin(_music_bass_phase) >= 0.0 else -1.0
-		var pad: float = (
-			sin(_music_time * TAU * float(chord_tones[0])) +
-			sin(_music_time * TAU * float(chord_tones[1])) +
-			sin(_music_time * TAU * float(chord_tones[2]))
-		) / 3.0
-		var step_phase: float = fmod(_music_time, _MUSIC_STEP_SECONDS) / _MUSIC_STEP_SECONDS
-		var gate: float = 0.94 - step_phase * 0.10
-		var sample: float = (lead_square * 0.040 + lead_sine * 0.026 + bass_square * 0.018 + pad * 0.026) * gate
-		_music_playback.push_frame(Vector2(sample, sample))
-		_music_time += 1.0 / _MUSIC_SAMPLE_RATE
-
-func _music_lead_for_step(chord_idx: int, step_in_chord: int) -> float:
-	return float(_MUSIC_MELODY_BY_CHORD[chord_idx][step_in_chord])
+	_music_engine.stream_frames(GameManager)
 
 func _exit_tree() -> void:
 	if SteamManager != null:
@@ -334,26 +284,24 @@ func _exit_tree() -> void:
 			SteamManager.lobby_list_updated.disconnect(_on_lobby_list_updated)
 	if GameManager != null and GameManager.music_enabled_changed.is_connected(_on_music_enabled_changed):
 		GameManager.music_enabled_changed.disconnect(_on_music_enabled_changed)
-	if menu_music_player != null:
-		menu_music_player.stop()
-	_music_playback = null
+	_music_engine.teardown()
 
 # ---------------------------------------------------------------------------
 # Button handlers
 # ---------------------------------------------------------------------------
 func _on_host_button_pressed() -> void:
-	DebugOverlay.log_message("[MainMenu] Host button pressed.")
+	DebugOverlay.log_message("[HomeScreen] Host button pressed.")
 	if SteamManager != null:
 		SteamManager.host_lobby()
 
 func _on_confirm_join_button_pressed() -> void:
 	var lobby_id: int = int(join_input.text.strip_edges())
 	if lobby_id > 0:
-		DebugOverlay.log_message("[MainMenu] Attempting join for lobby %d." % lobby_id)
+		DebugOverlay.log_message("[HomeScreen] Attempting join for lobby %d." % lobby_id)
 		if SteamManager != null:
 			SteamManager.join_lobby(lobby_id)
 	else:
-		DebugOverlay.log_message("[MainMenu] Invalid lobby ID entered.", true)
+		DebugOverlay.log_message("[HomeScreen] Invalid lobby ID entered.", true)
 
 func _on_test_button_pressed() -> void:
 	if SteamManager != null and SteamManager.lobby_id != 0:
@@ -362,15 +310,17 @@ func _on_test_button_pressed() -> void:
 		multiplayer.multiplayer_peer.close()
 		multiplayer.multiplayer_peer = null
 	GameManager.setup_offline_test()
-	get_tree().change_scene_to_file(GameManager.MATCH_SCENE_PATH)
+	var mode: Dictionary = GameManager.get_selected_game_mode()
+	var test_scene_path: String = str(mode.get("scene_path", GameManager.MATCH_SCENE_PATH))
+	get_tree().change_scene_to_file(test_scene_path)
 
 func _on_globe_button_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/globe/globe_arena.tscn")
 
 func _on_exit_button_pressed() -> void:
-	quit_confirm_dialog.title = "Exit BurnBridgers"
+	quit_confirm_dialog.title = "Exit FireTeam MNG"
 	quit_confirm_dialog.ok_button_text = "Exit Game"
-	quit_confirm_dialog.dialog_text = "Are you sure you want to close BurnBridgers and return to desktop?"
+	quit_confirm_dialog.dialog_text = "Are you sure you want to close FireTeam MNG and return to desktop?"
 	quit_confirm_dialog.popup_centered()
 
 func _on_settings_button_pressed() -> void:
@@ -391,16 +341,9 @@ func _sync_music_toggle() -> void:
 	music_toggle.set_pressed_no_signal(GameManager.music_enabled)
 
 func _apply_music_enabled_state() -> void:
-	if menu_music_player == null or GameManager == null:
+	if GameManager == null:
 		return
-	if GameManager.music_enabled:
-		if not menu_music_player.playing:
-			menu_music_player.play()
-		if _music_playback == null:
-			_music_playback = menu_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
-	else:
-		menu_music_player.stop()
-		_music_playback = null
+	_music_engine.set_enabled(GameManager.music_enabled)
 
 func _on_quit_confirmed() -> void:
 	get_tree().quit()
@@ -415,7 +358,7 @@ func _do_scene_change_lobby() -> void:
 	get_tree().change_scene_to_file(GameManager.LOBBY_SCENE_PATH)
 
 func _on_invite_join_requested(target_lobby_id: int) -> void:
-	DebugOverlay.log_message("[MainMenu] Processing invite join request for lobby %d." % target_lobby_id)
+	DebugOverlay.log_message("[HomeScreen] Processing invite join request for lobby %d." % target_lobby_id)
 
 func _on_refresh_lobbies_pressed() -> void:
 	_refresh_lobby_browser()
@@ -430,12 +373,12 @@ func _refresh_lobby_browser() -> void:
 		lobby_list_status.text = "Steam not initialized yet."
 		_rebuild_lobby_list([])
 		return
-	lobby_list_status.text = "Searching for BurnBridgers lobbies..."
+	lobby_list_status.text = "Scanning for FireTeam MNG operations..."
 	SteamManager.request_burnbridgers_lobby_list()
 	_rebuild_lobby_list(SteamManager.get_cached_public_lobbies())
 
 func _on_join_lobby_from_list(target_lobby_id: int) -> void:
-	DebugOverlay.log_message("[MainMenu] Joining listed lobby %d." % target_lobby_id)
+	DebugOverlay.log_message("[HomeScreen] Joining listed lobby %d." % target_lobby_id)
 	join_input.text = str(target_lobby_id)
 	if SteamManager != null:
 		SteamManager.join_lobby(target_lobby_id)
@@ -443,16 +386,16 @@ func _on_join_lobby_from_list(target_lobby_id: int) -> void:
 func _on_lobby_list_updated(lobbies: Array) -> void:
 	_rebuild_lobby_list(lobbies)
 	if lobbies.is_empty():
-		lobby_list_status.text = "No public BurnBridgers lobbies found."
+		lobby_list_status.text = "No public FireTeam MNG operations found."
 	else:
-		lobby_list_status.text = "%d BurnBridgers lobby(s) found." % lobbies.size()
+		lobby_list_status.text = "%d FireTeam MNG operation(s) found." % lobbies.size()
 
 func _rebuild_lobby_list(lobbies: Array) -> void:
 	for child in lobby_list.get_children():
 		child.queue_free()
 	if lobbies.is_empty():
 		var empty_label := Label.new()
-		empty_label.text = "No lobbies yet. Host a game to create one."
+		empty_label.text = "No operations yet. Open one to begin."
 		UiStyleScript.style_body(empty_label, true)
 		lobby_list.add_child(empty_label)
 		return
@@ -465,7 +408,7 @@ func _rebuild_lobby_list(lobbies: Array) -> void:
 
 		var name_label := Label.new()
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var lobby_name: String = str(item.get("name", "BurnBridgers Lobby"))
+		var lobby_name: String = str(item.get("name", "FireTeam MNG Operation"))
 		var members: int = int(item.get("members", 0))
 		name_label.text = "%s (%d/%d)" % [lobby_name, members, GameConstants.MAX_PLAYERS]
 		UiStyleScript.style_body(name_label)

@@ -1,7 +1,7 @@
 [gd_scene format=3 uid="uid://c3tanyp60wrif"]
 
-[ext_resource type="Script" uid="uid://c4vq8sqvnywxj" path="res://scripts/main_menu.gd" id="1_main_menu"]
-[ext_resource type="Script" uid="uid://5amruvkujxru" path="res://scripts/burning_bridge.gd" id="2_burning_bridge"]
+[ext_resource type="Script" path="res://scripts/screens/home_screen.gd" id="1_home_screen"]
+[ext_resource type="Script" path="res://scripts/screens/home_screen_background.gd" id="2_home_screen_background"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_menu_panel"]
 content_margin_left = 16.0
@@ -71,17 +71,17 @@ corner_radius_top_right = 10
 corner_radius_bottom_right = 10
 corner_radius_bottom_left = 10
 
-[node name="MainMenu" type="Control" unique_id=391934863]
+[node name="HomeScreen" type="Control" unique_id=391934863]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-script = ExtResource("1_main_menu")
+script = ExtResource("1_home_screen")
 
-[node name="BurningBridge" type="CanvasLayer" parent="." unique_id=1677095546]
-script = ExtResource("2_burning_bridge")
+[node name="HomeScreenBackground" type="CanvasLayer" parent="." unique_id=1677095546]
+script = ExtResource("2_home_screen_background")
 
 [node name="BackdropTint" type="ColorRect" parent="." unique_id=85751224]
 layout_mode = 1
@@ -132,14 +132,14 @@ alignment = 1
 layout_mode = 2
 theme_override_colors/font_color = Color(0.937255, 0.964706, 1, 1)
 theme_override_font_sizes/font_size = 30
-text = "BURN BRIDGERS"
+text = "FIRETEAM MNG"
 horizontal_alignment = 1
 
 [node name="Tagline" type="Label" parent="LeftMenuPanel/VBoxContainer" unique_id=247180099]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.631373, 0.733333, 0.866667, 0.95)
 theme_override_font_sizes/font_size = 13
-text = "Squad tactics in a burning world"
+text = "Sci-fi squad operations across hostile sectors"
 horizontal_alignment = 1
 
 [node name="HostButton" type="Button" parent="LeftMenuPanel/VBoxContainer" unique_id=1462478616]
@@ -149,7 +149,7 @@ theme_override_font_sizes/font_size = 15
 theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
-text = "Multiplayer"
+text = "Open Operations"
 
 [node name="Separator" type="HSeparator" parent="LeftMenuPanel/VBoxContainer" unique_id=1608539323]
 layout_mode = 2
@@ -161,7 +161,7 @@ theme_override_font_sizes/font_size = 15
 theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
-text = "Test (Offline)"
+text = "Solo Sim (Offline)"
 
 [node name="GlobeButton" type="Button" parent="LeftMenuPanel/VBoxContainer" unique_id=631047201]
 layout_mode = 2
@@ -213,7 +213,7 @@ theme_override_constants/separation = 8
 layout_mode = 2
 theme_override_colors/font_color = Color(0.937255, 0.964706, 1, 1)
 theme_override_font_sizes/font_size = 24
-text = "Join Game"
+text = "Join Operation"
 horizontal_alignment = 1
 
 [node name="JoinLobbyIdInput" type="LineEdit" parent="RightLobbyPanel/VBoxContainer" unique_id=1339839877]
@@ -239,7 +239,7 @@ layout_mode = 2
 [node name="PublicLobbiesTitle" type="Label" parent="RightLobbyPanel/VBoxContainer" unique_id=1657681715]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.788235, 0.858824, 0.960784, 1)
-text = "Public BurnBridgers Lobbies"
+text = "Public FireTeam MNG Operations"
 horizontal_alignment = 1
 
 [node name="RefreshLobbiesButton" type="Button" parent="RightLobbyPanel/VBoxContainer" unique_id=1678034002]
@@ -249,12 +249,12 @@ theme_override_font_sizes/font_size = 14
 theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
-text = "Refresh Lobbies"
+text = "Scan Operations"
 
 [node name="LobbyListStatus" type="Label" parent="RightLobbyPanel/VBoxContainer" unique_id=378713310]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.678431, 0.768627, 0.898039, 0.95)
-text = "Searching for BurnBridgers lobbies..."
+text = "Scanning for FireTeam MNG operations..."
 autowrap_mode = 2
 
 [node name="LobbyListScroll" type="ScrollContainer" parent="RightLobbyPanel/VBoxContainer" unique_id=965262630]
@@ -295,7 +295,7 @@ layout_mode = 2
 title = "Confirm Quit"
 initial_position = 1
 ok_button_text = "Yes, I quit"
-dialog_text = "You are giving up already? BurnBridgers believes in comebacks.
+dialog_text = "Abort mission and close FireTeam MNG?
 
 Quit anyway?"
 

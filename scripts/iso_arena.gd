@@ -1,5 +1,6 @@
 extends Node2D
 const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
+const ProceduralMusicScript := preload("res://scripts/audio/procedural_music.gd")
 
 ## Isometric arena — placeholder art, up to 8 players.
 ##
@@ -60,10 +61,7 @@ var _winner:    int   = -2   # -2 = playing, -1 = draw, 0+ = index of winner
 var _end_timer: float = 0.0
 var _origin:    Vector2      # screen position of world (0, 0) — updated each draw
 var _status_messages: Array[Dictionary] = []
-var _music_playback: AudioStreamGeneratorPlayback = null
-var _music_phase: float = 0.0
-var _music_bass_phase: float = 0.0
-var _music_time: float = 0.0
+var _music_engine = ProceduralMusicScript.new()
 var _terrain_renderer = TERRAIN_RENDERER_SCRIPT.new()
 var _zoom: float = 1.0
 const _ZOOM_MIN: float = 0.001
@@ -73,22 +71,6 @@ const _ZOOM_STEP: float = 0.1
 # ── Spawn positions (world units) — populated by _load_geo_map() ──────────────
 var _SPAWNS: Array = []
 
-const _MUSIC_SAMPLE_RATE: float = 44100.0
-const _MUSIC_STEP_SECONDS: float = 0.26
-const _MUSIC_STEPS_PER_CHORD: int = 8
-const _MUSIC_PROGRESS_ROOTS: Array[float] = [82.41, 69.30, 51.91, 55.00] # E, C#, G#, A
-const _MUSIC_MELODY_BY_CHORD: Array[Array] = [
-	[329.63, 369.99, 415.30, 493.88, 415.30, 369.99, 329.63, 369.99], # E
-	[277.18, 329.63, 369.99, 415.30, 369.99, 329.63, 277.18, 329.63], # C#m
-	[415.30, 369.99, 329.63, 369.99, 415.30, 493.88, 415.30, 369.99], # G#m
-	[440.00, 415.30, 369.99, 329.63, 369.99, 415.30, 440.00, 369.99], # A
-]
-const _MUSIC_CHORD_TONES: Array[Array] = [
-	[329.63, 415.30, 493.88], # E
-	[277.18, 329.63, 415.30], # C#m
-	[415.30, 493.88, 622.25], # G#m
-	[440.00, 554.37, 659.25], # A
-]
 const _HUD_BG: Color = Color(0.10, 0.08, 0.07, 0.88)
 const _HUD_BORDER: Color = Color(0.48, 0.35, 0.22, 0.90)
 const _HUD_TEXT: Color = Color(0.95, 0.90, 0.83, 1.0)
@@ -144,9 +126,7 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	if GameManager != null and GameManager.music_enabled_changed.is_connected(_on_music_enabled_changed):
 		GameManager.music_enabled_changed.disconnect(_on_music_enabled_changed)
-	if game_music_player != null:
-		game_music_player.stop()
-	_music_playback = null
+	_music_engine.teardown()
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -246,26 +226,11 @@ func _ensure_joy_motion_for_action(action: String, axis: JoyAxis, axis_value: fl
 func _setup_game_music() -> void:
 	if game_music_player == null:
 		return
-	var stream := AudioStreamGenerator.new()
-	stream.mix_rate = int(_MUSIC_SAMPLE_RATE)
-	stream.buffer_length = 0.25
-	game_music_player.stream = stream
-	game_music_player.volume_db = -17.0
-	if GameManager != null and GameManager.music_enabled:
-		game_music_player.play()
-	_music_playback = game_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
+	_music_engine.configure_preset("arena")
+	_music_engine.setup(game_music_player, GameManager != null and GameManager.music_enabled)
 
 func _on_music_enabled_changed(enabled: bool) -> void:
-	if game_music_player == null:
-		return
-	if enabled:
-		if not game_music_player.playing:
-			game_music_player.play()
-		if _music_playback == null:
-			_music_playback = game_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
-	else:
-		game_music_player.stop()
-		_music_playback = null
+	_music_engine.set_enabled(enabled)
 	_update_pause_music_button_label()
 
 func _update_pause_music_button_label() -> void:
@@ -274,34 +239,9 @@ func _update_pause_music_button_label() -> void:
 	pause_music_button.text = "Music: %s" % ("On" if GameManager.music_enabled else "Off")
 
 func _stream_game_music() -> void:
-	if _music_playback == null or GameManager == null or not GameManager.music_enabled:
+	if GameManager == null:
 		return
-	var frames_available: int = _music_playback.get_frames_available()
-	for _i in range(frames_available):
-		var step_idx: int = int(floor(_music_time / _MUSIC_STEP_SECONDS))
-		var chord_idx: int = int(floor(float(step_idx) / _MUSIC_STEPS_PER_CHORD)) % _MUSIC_PROGRESS_ROOTS.size()
-		var step_in_chord: int = step_idx % _MUSIC_STEPS_PER_CHORD
-		var lead_freq: float = _music_lead_for_step(chord_idx, step_in_chord)
-		var root_freq: float = _MUSIC_PROGRESS_ROOTS[chord_idx]
-		var chord_tones: Array = _MUSIC_CHORD_TONES[chord_idx]
-		_music_phase += TAU * lead_freq / _MUSIC_SAMPLE_RATE
-		_music_bass_phase += TAU * root_freq / _MUSIC_SAMPLE_RATE
-		var lead_square: float = 1.0 if sin(_music_phase) >= 0.0 else -1.0
-		var lead_upper: float = sin(_music_phase * 2.0) * 0.26
-		var bass_square: float = 1.0 if sin(_music_bass_phase) >= 0.0 else -1.0
-		var pad: float = (
-			sin(_music_time * TAU * float(chord_tones[0])) +
-			sin(_music_time * TAU * float(chord_tones[1])) +
-			sin(_music_time * TAU * float(chord_tones[2]))
-		) / 3.0
-		var step_phase: float = fmod(_music_time, _MUSIC_STEP_SECONDS) / _MUSIC_STEP_SECONDS
-		var gate: float = 0.92 - step_phase * 0.12
-		var sample: float = (lead_square * 0.042 + lead_upper * 0.028 + bass_square * 0.022 + pad * 0.030) * gate
-		_music_playback.push_frame(Vector2(sample, sample))
-		_music_time += 1.0 / _MUSIC_SAMPLE_RATE
-
-func _music_lead_for_step(chord_idx: int, step_in_chord: int) -> float:
-	return float(_MUSIC_MELODY_BY_CHORD[chord_idx][step_in_chord])
+	_music_engine.stream_frames(GameManager)
 
 # ── Player spawning ───────────────────────────────────────────────────────────
 func _spawn_players() -> void:
@@ -396,7 +336,7 @@ func _close_pause_menu() -> void:
 func _request_quit_to_menu() -> void:
 	_close_pause_menu()
 	if quit_confirm_dialog == null:
-		get_tree().change_scene_to_file(GameManager.MAIN_MENU_SCENE_PATH)
+		get_tree().change_scene_to_file(GameManager.HOME_SCREEN_SCENE_PATH)
 		return
 	_apply_quit_dialog_theme()
 	quit_confirm_dialog.dialog_text = "Are you sure you want to leave this match and return to the main menu?"
@@ -412,7 +352,7 @@ func _apply_quit_dialog_theme() -> void:
 	UiStyleScript.style_button(quit_confirm_dialog.get_cancel_button())
 
 func _on_quit_confirmed() -> void:
-	get_tree().change_scene_to_file(GameManager.MAIN_MENU_SCENE_PATH)
+	get_tree().change_scene_to_file(GameManager.HOME_SCREEN_SCENE_PATH)
 
 func _on_peer_connected(peer_id: int) -> void:
 	if multiplayer.is_server():
@@ -450,7 +390,7 @@ func _process(delta: float) -> void:
 	if _winner != -2:
 		_end_timer += delta
 		if _end_timer >= END_DELAY:
-			get_tree().change_scene_to_file(GameManager.MAIN_MENU_SCENE_PATH)
+			get_tree().change_scene_to_file(GameManager.HOME_SCREEN_SCENE_PATH)
 		queue_redraw()
 		return
 
