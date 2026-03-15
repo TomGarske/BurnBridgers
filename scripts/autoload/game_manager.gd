@@ -27,11 +27,11 @@ const MODE_MUSIC_PROFILES: Dictionary = {
 const GAME_MODES: Array[Dictionary] = [
 	{
 		"id": "pirates",
-		"label": "Pirates",
-		"subtitle": "Void Corsairs",
-		"badge": "[VOID]",
+		"label": "Blacksite Containment",
+		"subtitle": "Blacksite Border Patrol",
+		"badge": "[CONTAIN]",
 		"scene_path": MATCH_SCENE_PATH,
-		"description": "Naval PVE combat where squads choose cruisers and push back hostile fleets.",
+		"description": "Pilot floating containment drones to eliminate escapees using lasers, side shotguns, orbital strikes, and burst speed.",
 		"enabled": true,
 	},
 	{
@@ -222,7 +222,7 @@ func start_match() -> void:
 	if target_scene_path.is_empty():
 		target_scene_path = MATCH_SCENE_PATH
 	match_phase = MatchPhase.IN_MATCH
-	print("[GameManager] Starting '%s' with %d players." % [str(mode.get("label", "Pirates")), players.size()])
+	print("[GameManager] Starting '%s' with %d players." % [str(mode.get("label", "Blacksite Containment")), players.size()])
 	_load_match_scene.rpc(target_scene_path)
 
 @rpc("authority", "call_local", "reliable")

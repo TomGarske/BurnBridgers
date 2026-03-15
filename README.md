@@ -11,8 +11,8 @@ The project uses [GodotSteam](https://godotsteam.com/) for Steam lobbies and pee
 
 ## Current Game Modes
 
-- **Pirates** (`Void Corsairs`)  
-  Naval combat baseline mode (current primary playable mode).
+- **Blacksite Containment** (`Blacksite Border Patrol`)  
+  Floating drone defense mode: front laser, side shotguns, orbital strike support, and burst speed interception.
 - **Chrimera** (`Bioforge Run`)  
   Side-scroller roguelike escape concept.
 - **Replicants** (`Swarm Command`)  
