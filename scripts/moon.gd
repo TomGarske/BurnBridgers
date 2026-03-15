@@ -155,13 +155,22 @@ func _build_hex_overlay() -> void:
 		push_warning("moon: cannot load moon_goldberg_edges.png")
 		return
 
+	var disp_tex := load("res://assets/maps/moon_displacement.png") as Texture2D
+
 	var shader_code := """
 shader_type spatial;
 render_mode unshaded, cull_back, blend_mix, depth_draw_never;
 
-uniform sampler2D goldberg_tex : hint_default_transparent, filter_linear_mipmap_anisotropic;
+uniform sampler2D goldberg_tex     : hint_default_transparent, filter_linear_mipmap_anisotropic;
+uniform sampler2D displacement_tex : hint_default_black,       filter_linear_mipmap_anisotropic;
+uniform float displacement_strength : hint_range(0.0, 0.2) = 0.04;
 uniform float edge_opacity : hint_range(0.0, 1.0) = 0.5;
 uniform vec4  edge_color   : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+
+void vertex() {
+	float disp = texture(displacement_tex, UV).r;
+	VERTEX += NORMAL * disp * displacement_strength;
+}
 
 void fragment() {
 	vec4 s = texture(goldberg_tex, UV);
@@ -173,15 +182,17 @@ void fragment() {
 	shader.code = shader_code
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
-	mat.set_shader_parameter("goldberg_tex",  tex)
-	mat.set_shader_parameter("edge_opacity",  0.5)
-	mat.set_shader_parameter("edge_color",    Color(1.0, 1.0, 1.0, 1.0))
+	mat.set_shader_parameter("goldberg_tex",         tex)
+	mat.set_shader_parameter("displacement_tex",     disp_tex)
+	mat.set_shader_parameter("displacement_strength", displacement_strength)
+	mat.set_shader_parameter("edge_opacity",         0.5)
+	mat.set_shader_parameter("edge_color",           Color(1.0, 1.0, 1.0, 1.0))
 
-	var overlay_mesh        := SphereMesh.new()
-	# Must clear max vertex displacement (displacement_strength) to stay above surface
-	var overlay_r: float         = moon_radius + displacement_strength * 1.1 + 0.005
-	overlay_mesh.radius          = overlay_r
-	overlay_mesh.height          = overlay_r * 2.0
+	var overlay_mesh     := SphereMesh.new()
+	# Base radius just a hair above the undisplaced surface; displacement does the rest
+	var overlay_r: float  = moon_radius * 1.004
+	overlay_mesh.radius   = overlay_r
+	overlay_mesh.height   = overlay_r * 2.0
 	overlay_mesh.radial_segments = 128
 	overlay_mesh.rings           = 64
 
@@ -259,7 +270,7 @@ func _update_hex_highlight() -> void:
 	var sum  := Vector3.ZERO
 	for v in poly:
 		sum += v
-	var highlight_r: float = moon_radius + displacement_strength * 1.1 + 0.006
+	var highlight_r: float = moon_radius * 1.006
 	var center := (sum / n).normalized() * highlight_r
 
 	var verts := PackedVector3Array()
