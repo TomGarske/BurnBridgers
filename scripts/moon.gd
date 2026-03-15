@@ -17,9 +17,8 @@ extends Node3D
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 const ORBIT_DIST:             float = 6.0
-# Earth rotates 360° in 24 game-seconds (globe_arena BASE_DEG_PER_SEC = 15°/s).
-# Moon's real orbital period = 27.3 Earth days = 27.3 × 24 game-seconds ≈ 655 s/orbit.
-const BASE_ORBIT_DEG_PER_SEC: float = 360.0 / (27.3 * 24.0)  # ≈ 0.5495°/s
+# At time_scale 1.0 = real-time: one orbit per 27.3 days = 27.3 × 86400 real seconds.
+const BASE_ORBIT_DEG_PER_SEC: float = 360.0 / (27.3 * 86400.0)  # ≈ 0.0001526°/s
 
 # ── Internal nodes ────────────────────────────────────────────────────────────
 var _moon_mesh:      MeshInstance3D = null

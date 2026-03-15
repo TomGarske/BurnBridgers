@@ -35,12 +35,15 @@ const AXIAL_TILT_DEG: float = 23.5
 var   _default_quat:  Quaternion
 
 # ── Time-driven rotation ──────────────────────────────────────────────────────
-# At time_scale 1.0: Earth rotates 15°/s (one rotation per 24 game-seconds).
-# 1 game-second = 1 real hour.  time_scale N = N hours/s of simulated time.
-const BASE_DEG_PER_SEC: float = 15.0
+# At time_scale 1.0: real-time (Earth rotates once per 86400 game-seconds).
+# time_scale N = N real seconds per game-second of simulated time.
+const BASE_DEG_PER_SEC: float = 360.0 / 86400.0   # ≈ 0.004167°/s
 const SPEED_DRAG_SENS:  float = 0.05
-# Stepped presets (hours/s of simulated time)
-const TIME_SCALE_STEPS: Array = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 24.0, 48.0, 120.0, 240.0, 720.0]
+const TIME_SCALE_STEPS: Array = [
+	0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+	10, 20, 30, 40, 50, 60, 70, 80, 90,
+	100, 200, 300, 400, 500, 600, 700, 800, 900, 1000
+]
 var   _sim_angle:       float = 0.0
 var   _time_scale:      float = 1.0
 
@@ -444,11 +447,11 @@ func _update_timescale_label() -> void:
 		return
 	if _time_scale == 0.0:
 		_time_scale_label.text = "PAUSED"
-		return
-	# 1 game-second = _time_scale real hours of simulated time
-	if _time_scale >= 24.0:
-		_time_scale_label.text = "%.0fd/s" % (_time_scale / 24.0)
-	elif _time_scale >= 1.0:
-		_time_scale_label.text = "%.1fh/s" % _time_scale
+	elif _time_scale < 60.0:
+		_time_scale_label.text = "x%d" % int(_time_scale)
+	elif _time_scale < 3600.0:
+		_time_scale_label.text = "%.1fmin/s" % (_time_scale / 60.0)
+	elif _time_scale < 86400.0:
+		_time_scale_label.text = "%.1fh/s" % (_time_scale / 3600.0)
 	else:
-		_time_scale_label.text = "%.0fm/s" % (_time_scale * 60.0)
+		_time_scale_label.text = "%.1fd/s" % (_time_scale / 86400.0)
