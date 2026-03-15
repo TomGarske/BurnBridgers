@@ -65,6 +65,10 @@ var _music_phase: float = 0.0
 var _music_bass_phase: float = 0.0
 var _music_time: float = 0.0
 var _terrain_renderer = TERRAIN_RENDERER_SCRIPT.new()
+var _zoom: float = 1.0
+const _ZOOM_MIN: float = 0.25
+const _ZOOM_MAX: float = 3.0
+const _ZOOM_STEP: float = 0.1
 
 # ── Spawn positions (world units) — populated by _load_geo_map() ──────────────
 var _SPAWNS: Array = []
@@ -144,6 +148,16 @@ func _exit_tree() -> void:
 		game_music_player.stop()
 	_music_playback = null
 
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton:
+		if event.pressed:
+			if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_zoom = clampf(_zoom + _ZOOM_STEP, _ZOOM_MIN, _ZOOM_MAX)
+				queue_redraw()
+			elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_zoom = clampf(_zoom - _ZOOM_STEP, _ZOOM_MIN, _ZOOM_MAX)
+				queue_redraw()
+
 # ── Static map loader — all peers load the same committed asset ───────────────
 func _load_geo_map() -> void:
 	const MAP_PATH := "res://assets/maps/caribbean.json"
@@ -171,11 +185,11 @@ func _load_geo_map() -> void:
 
 # ── Coordinate helpers ────────────────────────────────────────────────────────
 func _w2s(wx: float, wy: float) -> Vector2:
-	return _origin + Vector2((wx - wy) * TILE_W * 0.5, (wx + wy) * TILE_H * 0.5)
+	return _origin + Vector2((wx - wy) * TILE_W * _zoom * 0.5, (wx + wy) * TILE_H * _zoom * 0.5)
 
 ## Convert a world-space direction vector to a normalised screen-space direction.
 func _dir_screen(dx: float, dy: float) -> Vector2:
-	var v := Vector2((dx - dy) * TILE_W * 0.5, (dx + dy) * TILE_H * 0.5)
+	var v := Vector2((dx - dy) * TILE_W * _zoom * 0.5, (dx + dy) * TILE_H * _zoom * 0.5)
 	return v.normalized() if v.length_squared() > 0.001 else Vector2.DOWN
 
 # ── Input registration ────────────────────────────────────────────────────────
@@ -601,7 +615,7 @@ func _draw() -> void:
 
 	# Camera: keep the local player centred on screen every frame
 	var me: Dictionary = _players[_my_index]
-	_origin = vp * 0.5 - Vector2((me.wx - me.wy) * TILE_W * 0.5, (me.wx + me.wy) * TILE_H * 0.5)
+	_origin = vp * 0.5 - Vector2((me.wx - me.wy) * TILE_W * _zoom * 0.5, (me.wx + me.wy) * TILE_H * _zoom * 0.5)
 
 	draw_rect(Rect2(Vector2.ZERO, vp), _C_SKY)
 	_draw_tiles(vp)
@@ -620,7 +634,7 @@ func _draw() -> void:
 
 # ── Tile drawing ──────────────────────────────────────────────────────────────
 func _draw_tiles(vp: Vector2) -> void:
-	_terrain_renderer.draw_tiles(self, _origin, vp, TILE_W, TILE_H, RENDER_MARGIN)
+	_terrain_renderer.draw_tiles(self, _origin, vp, TILE_W * _zoom, TILE_H * _zoom, RENDER_MARGIN)
 
 # ── Character drawing (pirate ship) ──────────────────────────────────────────
 func _draw_player(p: Dictionary) -> void:
