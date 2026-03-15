@@ -71,9 +71,11 @@ const ORBITAL_DEG_PER_SEC: float = 360.0 / (365.25 * 86400.0)  # ≈ 0.0000114°
 var   _orbital_angle:      float = PI
 
 # ── Hex selection ─────────────────────────────────────────────────────────────
-var _hex_data:     Array = []   # Array of {c:Vector3, n:Array, p:PackedVector3Array}
-var _selected_hex: int   = 0
-var _hex_highlight: MeshInstance3D = null
+var _hex_data:        Array          = []   # Array of {c:Vector3, n:Array, p:PackedVector3Array}
+var _selected_hex:    int            = 0
+var _hex_highlight:   MeshInstance3D = null
+var _goldberg_overlay: MeshInstance3D = null
+var _hex_grid_visible: bool           = true
 
 # ── Camera tracking ───────────────────────────────────────────────────────────
 const CAM_TRACK_SPEED: float = 5.0   # slerp speed toward selected hex
@@ -144,6 +146,19 @@ func _reset_view() -> void:
 	_sim_angle  = 0.0
 	_time_scale = 1.0
 	_update_timescale_label()
+
+
+func _toggle_hex_grid() -> void:
+	_hex_grid_visible = not _hex_grid_visible
+	if _goldberg_overlay: _goldberg_overlay.visible  = _hex_grid_visible
+	if _hex_highlight:    _hex_highlight.visible     = _hex_grid_visible
+	_moon.set_hex_grid_visible(_hex_grid_visible)
+	# Sync button label — find it by iterating the canvas children
+	for canvas in get_children():
+		if canvas is CanvasLayer:
+			for child in canvas.get_children():
+				if child is Button and child.text.begins_with("Grid"):
+					child.text = "Grid: ON" if _hex_grid_visible else "Grid: OFF"
 
 # ── Input ─────────────────────────────────────────────────────────────────────
 func _unhandled_input(event: InputEvent) -> void:
@@ -226,6 +241,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				KEY_R:
 					if not key.echo:
 						_reset_view()
+				KEY_G:
+					if not key.echo:
+						_toggle_hex_grid()
 
 # ── Globe orientation (time-driven, camera-independent) ───────────────────────
 func _update_globe() -> void:
@@ -364,6 +382,7 @@ void fragment() {
 	node.mesh              = mesh
 	node.material_override = mat
 	_globe_root.add_child(node)
+	_goldberg_overlay = node
 
 # ── Hex navigation data ────────────────────────────────────────────────────────
 func _load_hex_data() -> void:
@@ -514,6 +533,20 @@ func _add_focus_hud() -> void:
 	hbox.add_child(btn_fast)
 
 	_update_timescale_label()
+
+	# Grid toggle button — top-right
+	var grid_btn := Button.new()
+	grid_btn.text = "Grid: ON"
+	grid_btn.anchor_left   = 1.0
+	grid_btn.anchor_right  = 1.0
+	grid_btn.anchor_top    = 0.0
+	grid_btn.anchor_bottom = 0.0
+	grid_btn.offset_left   = -110.0
+	grid_btn.offset_top    = 12.0
+	grid_btn.offset_right  = -12.0
+	grid_btn.offset_bottom = 44.0
+	grid_btn.pressed.connect(func(): _toggle_hex_grid())
+	canvas.add_child(grid_btn)
 
 
 func _update_focus_label() -> void:

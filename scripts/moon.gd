@@ -301,6 +301,11 @@ func set_display_scale(s: float) -> void:
 		_moon_mesh.scale = Vector3.ONE * s
 
 
+func set_hex_grid_visible(v: bool) -> void:
+	if _hex_overlay  != null: _hex_overlay.visible  = v
+	if _hex_highlight != null: _hex_highlight.visible = v
+
+
 func get_world_center() -> Vector3:
 	if _moon_mesh == null:
 		return Vector3.ZERO
