@@ -149,7 +149,7 @@ theme_override_font_sizes/font_size = 15
 theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
 theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
 theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
-text = "Host Game"
+text = "Multiplayer"
 
 [node name="Separator" type="HSeparator" parent="LeftMenuPanel/VBoxContainer" unique_id=1608539323]
 layout_mode = 2
