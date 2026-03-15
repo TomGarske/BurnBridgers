@@ -1,36 +1,36 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene format=3 uid="uid://bc5hloasb8rvh"]
 
-[ext_resource type="Script" path="res://scripts/loading_screen.gd" id="1_loading"]
+[ext_resource type="Script" uid="uid://csjm6l7ws3qay" path="res://scripts/loading_screen.gd" id="1_loading"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_loading_card"]
+content_margin_left = 24.0
+content_margin_top = 24.0
+content_margin_right = 24.0
+content_margin_bottom = 24.0
 bg_color = Color(0.14, 0.11, 0.09, 0.94)
-corner_radius_top_left = 18
-corner_radius_top_right = 18
-corner_radius_bottom_right = 18
-corner_radius_bottom_left = 18
 border_width_left = 2
 border_width_top = 2
 border_width_right = 2
 border_width_bottom = 2
 border_color = Color(0.48, 0.35, 0.22, 0.85)
-shadow_size = 22
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_right = 18
+corner_radius_bottom_left = 18
 shadow_color = Color(0, 0, 0, 0.45)
-content_margin_left = 24.0
-content_margin_top = 24.0
-content_margin_right = 24.0
-content_margin_bottom = 24.0
+shadow_size = 22
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_progress_bg"]
 bg_color = Color(0.09, 0.07, 0.06, 0.95)
-corner_radius_top_left = 10
-corner_radius_top_right = 10
-corner_radius_bottom_right = 10
-corner_radius_bottom_left = 10
 border_width_left = 1
 border_width_top = 1
 border_width_right = 1
 border_width_bottom = 1
-border_color = Color(0.35, 0.26, 0.18, 0.80)
+border_color = Color(0.35, 0.26, 0.18, 0.8)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_progress_fill"]
 bg_color = Color(0.88, 0.66, 0.32, 1)
@@ -38,10 +38,10 @@ corner_radius_top_left = 10
 corner_radius_top_right = 10
 corner_radius_bottom_right = 10
 corner_radius_bottom_left = 10
-shadow_size = 8
 shadow_color = Color(0.42, 0.25, 0.11, 0.55)
+shadow_size = 8
 
-[node name="LoadingScreen" type="Control"]
+[node name="LoadingScreen" type="Control" unique_id=274859132]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -50,7 +50,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_loading")
 
-[node name="Background" type="ColorRect" parent="."]
+[node name="Background" type="ColorRect" parent="." unique_id=535861150]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -59,9 +59,9 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.06, 0.05, 0.04, 1)
 
-[node name="AmbientGlowTop" type="ColorRect" parent="."]
+[node name="AmbientGlowTop" type="ColorRect" parent="." unique_id=1965019304]
 layout_mode = 1
-anchors_preset = 10
+anchors_preset = 5
 anchor_left = 0.5
 anchor_right = 0.5
 offset_left = -430.0
@@ -69,9 +69,9 @@ offset_top = 28.0
 offset_right = 430.0
 offset_bottom = 260.0
 grow_horizontal = 2
-color = Color(0.52, 0.36, 0.18, 0.20)
+color = Color(0.52, 0.36, 0.18, 0.2)
 
-[node name="Center" type="CenterContainer" parent="."]
+[node name="Center" type="CenterContainer" parent="." unique_id=430132381]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -79,45 +79,45 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="CardPanel" type="PanelContainer" parent="Center"]
+[node name="CardPanel" type="PanelContainer" parent="Center" unique_id=2110458613]
 layout_mode = 2
 theme_override_styles/panel = SubResource("StyleBoxFlat_loading_card")
 
-[node name="VBoxContainer" type="VBoxContainer" parent="Center/CardPanel"]
-layout_mode = 2
+[node name="VBoxContainer" type="VBoxContainer" parent="Center/CardPanel" unique_id=2079164611]
 custom_minimum_size = Vector2(560, 220)
+layout_mode = 2
 theme_override_constants/separation = 14
 alignment = 1
 
-[node name="Title" type="Label" parent="Center/CardPanel/VBoxContainer"]
+[node name="Title" type="Label" parent="Center/CardPanel/VBoxContainer" unique_id=922115427]
 layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.9, 0.83, 1)
 theme_override_font_sizes/font_size = 48
 text = "BURN BRIDGERS"
 horizontal_alignment = 1
-theme_override_colors/font_color = Color(0.95, 0.90, 0.83, 1)
 
-[node name="Subtitle" type="Label" parent="Center/CardPanel/VBoxContainer"]
+[node name="Subtitle" type="Label" parent="Center/CardPanel/VBoxContainer" unique_id=866884294]
 layout_mode = 2
+theme_override_colors/font_color = Color(0.79, 0.7, 0.6, 1)
 text = "Forging bridges... 0%"
 horizontal_alignment = 1
-theme_override_colors/font_color = Color(0.79, 0.70, 0.60, 1)
 
-[node name="ProgressBar" type="ProgressBar" parent="Center/CardPanel/VBoxContainer"]
+[node name="ProgressBar" type="ProgressBar" parent="Center/CardPanel/VBoxContainer" unique_id=1896111324]
 custom_minimum_size = Vector2(500, 26)
 layout_mode = 2
-show_percentage = false
 theme_override_styles/background = SubResource("StyleBoxFlat_progress_bg")
 theme_override_styles/fill = SubResource("StyleBoxFlat_progress_fill")
+show_percentage = false
 
-[node name="Spinner" type="Label" parent="Center/CardPanel/VBoxContainer"]
+[node name="Spinner" type="Label" parent="Center/CardPanel/VBoxContainer" unique_id=1462634549]
 layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.68, 0.34, 1)
 theme_override_font_sizes/font_size = 34
 text = "|"
 horizontal_alignment = 1
-theme_override_colors/font_color = Color(0.90, 0.68, 0.34, 1)
 
-[node name="SkipHint" type="Label" parent="Center/CardPanel/VBoxContainer"]
+[node name="SkipHint" type="Label" parent="Center/CardPanel/VBoxContainer" unique_id=2015035186]
 layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.56, 0.5, 0.9)
 text = "Press Enter or Esc to continue"
 horizontal_alignment = 1
-theme_override_colors/font_color = Color(0.62, 0.56, 0.50, 0.9)
