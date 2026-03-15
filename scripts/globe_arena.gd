@@ -53,6 +53,9 @@ const CAM_TRACK_SPEED: float = 5.0   # slerp speed toward selected hex
 var   _cam_dir: Vector3 = Vector3.ZERO  # smoothed world-space look direction
 var   _cam_up:  Vector3 = Vector3.UP    # smoothed up vector — always tracks pole
 
+# ── HUD ───────────────────────────────────────────────────────────────────────
+var _focus_label: Label = null
+
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
@@ -62,6 +65,7 @@ func _ready() -> void:
 	_apply_atmosphere_material()
 	_add_goldberg_overlay()
 	_setup_hex_highlight()
+	_add_focus_hud()
 	_update_globe()
 	_update_camera(0.0)
 
@@ -122,10 +126,12 @@ func _unhandled_input(event: InputEvent) -> void:
 					if not key.echo:
 						_focus = Focus.EARTH
 						_cam_dir = Vector3.ZERO
+						_update_focus_label()
 				KEY_2:
 					if not key.echo:
 						_focus = Focus.MOON
 						_cam_dir = Vector3.ZERO
+						_update_focus_label()
 				KEY_R:
 					if not key.echo:
 						_reset_view()
@@ -347,3 +353,31 @@ func _navigate_hex(dir: Vector2) -> void:
 			best = int(ni)
 	_selected_hex = best
 	_update_hex_highlight()
+
+
+# ── Focus HUD ─────────────────────────────────────────────────────────────────
+func _add_focus_hud() -> void:
+	var canvas := CanvasLayer.new()
+	add_child(canvas)
+
+	_focus_label = Label.new()
+	_focus_label.anchor_left   = 0.0
+	_focus_label.anchor_right  = 0.0
+	_focus_label.anchor_top    = 1.0
+	_focus_label.anchor_bottom = 1.0
+	_focus_label.offset_left   = 12.0
+	_focus_label.offset_top    = -44.0
+	_focus_label.offset_right  = 300.0
+	_focus_label.offset_bottom = -12.0
+	_focus_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85, 0.8))
+	canvas.add_child(_focus_label)
+	_update_focus_label()
+
+
+func _update_focus_label() -> void:
+	if _focus_label == null:
+		return
+	if _focus == Focus.EARTH:
+		_focus_label.text = "[1] Earth  |  2: Moon"
+	else:
+		_focus_label.text = "1: Earth  |  [2] Moon"

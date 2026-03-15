@@ -178,8 +178,10 @@ void fragment() {
 	mat.set_shader_parameter("edge_color",    Color(1.0, 1.0, 1.0, 1.0))
 
 	var overlay_mesh        := SphereMesh.new()
-	overlay_mesh.radius          = moon_radius * 1.004
-	overlay_mesh.height          = moon_radius * 1.004 * 2.0
+	# Must clear max vertex displacement (displacement_strength) to stay above surface
+	var overlay_r: float         = moon_radius + displacement_strength * 1.1 + 0.005
+	overlay_mesh.radius          = overlay_r
+	overlay_mesh.height          = overlay_r * 2.0
 	overlay_mesh.radial_segments = 128
 	overlay_mesh.rings           = 64
 
@@ -257,13 +259,14 @@ func _update_hex_highlight() -> void:
 	var sum  := Vector3.ZERO
 	for v in poly:
 		sum += v
-	var center := (sum / n).normalized() * (moon_radius * 1.012)
+	var highlight_r: float = moon_radius + displacement_strength * 1.1 + 0.006
+	var center := (sum / n).normalized() * highlight_r
 
 	var verts := PackedVector3Array()
 	for i in range(n):
 		verts.append(center)
-		verts.append(poly[i] * (moon_radius * 1.012))
-		verts.append(poly[(i + 1) % n] * (moon_radius * 1.012))
+		verts.append(poly[i] * highlight_r)
+		verts.append(poly[(i + 1) % n] * highlight_r)
 
 	var arrays: Array = []
 	arrays.resize(Mesh.ARRAY_MAX)
