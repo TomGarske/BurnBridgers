@@ -270,7 +270,7 @@ func _update_hex_highlight() -> void:
 	var sum  := Vector3.ZERO
 	for v in poly:
 		sum += v
-	var highlight_r: float = moon_radius * 1.006
+	var highlight_r: float = moon_radius + displacement_strength + 0.01
 	var center := (sum / n).normalized() * highlight_r
 
 	var verts := PackedVector3Array()
