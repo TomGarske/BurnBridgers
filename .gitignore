@@ -10,7 +10,10 @@ export_presets.cfg
 # GodotSteam GDExtension binaries — installed via setup scripts
 addons/godotsteam/
 
-# Local debug log output
+# Steam test app ID file — never commit
+steam_appid.txt
+
+# Local debug log output from run.ps1 -Mode debug
 logs/
 
 # OS clutter
