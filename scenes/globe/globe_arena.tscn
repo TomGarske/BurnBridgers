@@ -48,15 +48,10 @@ script = ExtResource("1_globe")
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=413666926]
 environment = SubResource("Environment_1")
 
-[node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=476553977]
-transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 0, 0)
-light_color = Color(1, 0.95, 0.85, 1)
-light_energy = 1.2
-
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1762861519]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 3)
 near = 0.01
-far = 100.0
+far = 200000.0
 
 [node name="GlobeRoot" type="Node3D" parent="." unique_id=735332995]
 
