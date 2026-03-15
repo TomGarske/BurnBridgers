@@ -10,17 +10,14 @@ const CAM_DIST_MIN:      float = 1.2
 const CAM_DIST_MAX:      float = 10.0
 const ZOOM_STEP:         float = 0.1
 const ZOOM_SMOOTH:       float = 8.0
-const ORBIT_DEG_PER_SEC: float = 90.0   # arrow-key orbit speed
 const ELEVATION_LIMIT:   float = 85.0   # keep away from pole singularity
 
 const DEFAULT_CAM_DIST:  float = 3.0
 const DEFAULT_AZIMUTH:   float = 0.0
 const DEFAULT_ELEVATION: float = 20.0   # slightly above equator
 
-var _cam_dist:       float = DEFAULT_CAM_DIST
+var _cam_dist:        float = DEFAULT_CAM_DIST
 var _cam_dist_target: float = DEFAULT_CAM_DIST
-var _cam_azimuth:    float = DEFAULT_AZIMUTH    # degrees, horizontal orbit
-var _cam_elevation:  float = DEFAULT_ELEVATION  # degrees, vertical orbit
 
 # ── Axial tilt ───────────────────────────────────────────────────────────────
 const AXIAL_TILT_DEG: float = 23.5
@@ -28,49 +25,46 @@ var   _default_quat:  Quaternion
 
 # ── Time-driven rotation ──────────────────────────────────────────────────────
 # 1 real minute = 1 full rotation  →  6 °/s at time_scale 1.0
-const BASE_DEG_PER_SEC: float = 0.25   # 360° / 1440 s = 1 rotation per 24 min
+const BASE_DEG_PER_SEC: float = 15.0   # 360° / 24 s = 1 rotation per 24 sec
 const TIME_SCALE_MIN:   float = 0.0
 const TIME_SCALE_MAX:   float = 120.0
 const SPEED_DRAG_SENS:  float = 0.05
 var   _sim_angle:       float = 0.0
 var   _time_scale:      float = 1.0
 
+# ── Hex selection ─────────────────────────────────────────────────────────────
+var _hex_data:     Array = []   # Array of {c:Vector3, n:Array, p:PackedVector3Array}
+var _selected_hex: int   = 0
+var _hex_highlight: MeshInstance3D = null
+
+# ── Camera tracking ───────────────────────────────────────────────────────────
+const CAM_TRACK_SPEED: float = 5.0   # slerp speed toward selected hex
+var   _cam_dir: Vector3 = Vector3.ZERO  # smoothed world-space look direction
+var   _cam_up:  Vector3 = Vector3.UP    # smoothed up vector — always tracks pole
+
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
 	_default_quat = Quaternion(Vector3.RIGHT, deg_to_rad(AXIAL_TILT_DEG))
+	_load_hex_data()
 	_apply_globe_texture()
 	_apply_atmosphere_material()
-	_add_grid_overlay()
-	_add_reset_button()
+	_add_goldberg_overlay()
+	_setup_hex_highlight()
 	_update_globe()
-	_update_camera()
+	_update_camera(0.0)
 
 func _process(delta: float) -> void:
 	_sim_angle  += BASE_DEG_PER_SEC * _time_scale * delta
 	_cam_dist    = lerpf(_cam_dist, _cam_dist_target, ZOOM_SMOOTH * delta)
 
-	# Arrow-key orbit
-	var orbit_speed := ORBIT_DEG_PER_SEC * delta
-	if Input.is_key_pressed(KEY_LEFT):
-		_cam_azimuth -= orbit_speed
-	if Input.is_key_pressed(KEY_RIGHT):
-		_cam_azimuth += orbit_speed
-	if Input.is_key_pressed(KEY_UP):
-		_cam_elevation = clampf(_cam_elevation + orbit_speed, -ELEVATION_LIMIT, ELEVATION_LIMIT)
-	if Input.is_key_pressed(KEY_DOWN):
-		_cam_elevation = clampf(_cam_elevation - orbit_speed, -ELEVATION_LIMIT, ELEVATION_LIMIT)
-
 	_update_globe()
-	_update_camera()
+	_update_camera(delta)
 
 # ── Reset view ────────────────────────────────────────────────────────────────
 func _reset_view() -> void:
-	_cam_dist_target = DEFAULT_CAM_DIST
-	_cam_azimuth     = DEFAULT_AZIMUTH
-	_cam_elevation   = DEFAULT_ELEVATION
-	_sim_angle       = 0.0
-	_time_scale      = 1.0
+	_sim_angle  = 0.0
+	_time_scale = 1.0
 
 # ── Input ─────────────────────────────────────────────────────────────────────
 func _unhandled_input(event: InputEvent) -> void:
@@ -84,8 +78,15 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	elif event is InputEventKey:
 		var key := event as InputEventKey
-		if key.pressed and not key.echo and key.keycode == KEY_R:
-			_reset_view()
+		if key.pressed:
+			match key.keycode:
+				KEY_LEFT:  _navigate_hex(Vector2(-1.0,  0.0))
+				KEY_RIGHT: _navigate_hex(Vector2( 1.0,  0.0))
+				KEY_UP:    _navigate_hex(Vector2( 0.0,  1.0))
+				KEY_DOWN:  _navigate_hex(Vector2( 0.0, -1.0))
+				KEY_R:
+					if not key.echo:
+						_reset_view()
 
 # ── Globe orientation (time-driven, camera-independent) ───────────────────────
 func _update_globe() -> void:
@@ -93,15 +94,23 @@ func _update_globe() -> void:
 	_globe_root.quaternion = (_default_quat * spin_q).normalized()
 
 # ── Orbit camera ──────────────────────────────────────────────────────────────
-func _update_camera() -> void:
-	var az := deg_to_rad(_cam_azimuth)
-	var el := deg_to_rad(_cam_elevation)
-	_camera.position = Vector3(
-		sin(az) * cos(el),
-		sin(el),
-		cos(az) * cos(el)
-	) * _cam_dist
-	_camera.look_at(Vector3.ZERO, Vector3.UP)
+func _update_camera(delta: float) -> void:
+	if not _hex_data.is_empty():
+		var target := (_globe_root.global_transform.basis * (_hex_data[_selected_hex].c as Vector3)).normalized()
+		if _cam_dir.is_zero_approx():
+			_cam_dir = target
+		else:
+			_cam_dir = _cam_dir.slerp(target, 1.0 - exp(-CAM_TRACK_SPEED * delta))
+
+	# Always slerp up toward the world north pole so axis is always vertical
+	var pole      := (_default_quat * Vector3.UP).normalized()
+	var perp      := (pole - _cam_dir * _cam_dir.dot(pole))
+	var target_up := perp.normalized() if perp.length_squared() > 1e-4 else Vector3.FORWARD
+	_cam_up        = _cam_up.slerp(target_up, 1.0 - exp(-CAM_TRACK_SPEED * delta))
+
+	_camera.position = _cam_dir * _cam_dist
+	_camera.look_at(Vector3.ZERO, _cam_up)
+
 
 # ── Texture loading ────────────────────────────────────────────────────────────
 func _apply_globe_texture() -> void:
@@ -133,23 +142,31 @@ func _apply_atmosphere_material() -> void:
 	mat.emission_energy_multiplier = 0.15
 	_atmo_mesh.material_override = mat
 
-# ── Lat/lon grid overlay ──────────────────────────────────────────────────────
-func _add_grid_overlay() -> void:
-	var mesh := SphereMesh.new()
-	mesh.radius           = 1.003
-	mesh.height           = 2.006
-	mesh.radial_segments  = 72
-	mesh.rings            = 36
+
+# ── Goldberg polyhedron overlay ───────────────────────────────────────────────
+func _add_goldberg_overlay() -> void:
+	var img := Image.load_from_file("res://assets/maps/goldberg_edges.png")
+	if img == null:
+		push_error("globe_arena: cannot load res://assets/maps/goldberg_edges.png")
+		return
+	img.convert(Image.FORMAT_RGBA8)
+	img.generate_mipmaps()
+	var tex := ImageTexture.create_from_image(img)
 
 	var shader_code := """
 shader_type spatial;
-render_mode unshaded, cull_back, blend_add;
+render_mode unshaded, cull_back, blend_mix, depth_draw_never;
+
+uniform sampler2D goldberg_tex : hint_default_transparent, filter_linear_mipmap_anisotropic;
+uniform float edge_opacity : hint_range(0.0, 1.0) = 0.6;
+uniform vec4  edge_color   : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+uniform bool  show_grid    = true;
 
 void fragment() {
-\tfloat fx = fract(UV.x * 24.0);
-\tfloat fy = fract(UV.y * 12.0);
-\tif (fx > 0.012 && fy > 0.012) { discard; }
-\tALBEDO = vec3(0.3, 0.7, 1.0) * 0.45;
+\tif (!show_grid) { discard; }
+\tvec4 s = texture(goldberg_tex, UV);
+\tALBEDO = edge_color.rgb;
+\tALPHA  = s.a * edge_opacity * edge_color.a;
 }
 """
 
@@ -158,25 +175,118 @@ void fragment() {
 
 	var mat := ShaderMaterial.new()
 	mat.shader = shader
+	mat.set_shader_parameter("goldberg_tex", tex)
+	mat.set_shader_parameter("edge_opacity", 0.6)
+	mat.set_shader_parameter("edge_color", Color(1.0, 1.0, 1.0, 1.0))
+	mat.set_shader_parameter("show_grid", true)
 
-	var grid_mesh := MeshInstance3D.new()
-	grid_mesh.mesh              = mesh
-	grid_mesh.material_override = mat
-	_globe_root.add_child(grid_mesh)
+	var mesh := SphereMesh.new()
+	mesh.radius          = 1.004
+	mesh.height          = 2.008
+	mesh.radial_segments = 128
+	mesh.rings           = 64
 
-# ── Reset button ──────────────────────────────────────────────────────────────
-func _add_reset_button() -> void:
-	var canvas := CanvasLayer.new()
-	add_child(canvas)
-	var btn := Button.new()
-	btn.text          = "Reset View  [R]"
-	btn.anchor_left   = 1.0
-	btn.anchor_right  = 1.0
-	btn.anchor_top    = 1.0
-	btn.anchor_bottom = 1.0
-	btn.offset_left   = -160.0
-	btn.offset_top    = -52.0
-	btn.offset_right  = -12.0
-	btn.offset_bottom = -12.0
-	canvas.add_child(btn)
-	btn.pressed.connect(_reset_view)
+	var node := MeshInstance3D.new()
+	node.name              = "GoldbergOverlay"
+	node.mesh              = mesh
+	node.material_override = mat
+	_globe_root.add_child(node)
+
+# ── Hex navigation data ────────────────────────────────────────────────────────
+func _load_hex_data() -> void:
+	var f := FileAccess.open("res://assets/data/goldberg_data.json", FileAccess.READ)
+	if f == null:
+		push_error("globe_arena: cannot load res://assets/data/goldberg_data.json")
+		return
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if typeof(parsed) != TYPE_DICTIONARY:
+		push_error("globe_arena: goldberg_data.json parse failed")
+		return
+	for face_dict in parsed["faces"]:
+		var ca: Array = face_dict["c"]
+		var poly_raw: Array = face_dict["p"]
+		var poly := PackedVector3Array()
+		for pt: Array in poly_raw:
+			poly.append(Vector3(pt[0], pt[1], pt[2]))
+		_hex_data.append({
+			"c": Vector3(ca[0], ca[1], ca[2]),
+			"n": face_dict["n"],
+			"p": poly,
+		})
+	# Start on the hex nearest the equator at prime meridian
+	var best := 0
+	var best_d := INF
+	for i in range(_hex_data.size()):
+		var d := (_hex_data[i].c as Vector3).distance_to(Vector3(-1.0, 0.0, 0.0))
+		if d < best_d:
+			best_d = d
+			best = i
+	_selected_hex = best
+
+func _setup_hex_highlight() -> void:
+	var shader_code := """
+shader_type spatial;
+render_mode unshaded, cull_disabled, blend_add, depth_draw_never;
+
+void fragment() {
+\tfloat pulse = 0.55 + 0.45 * sin(TIME * 4.0);
+\tALBEDO = vec3(0.2, 0.75, 1.0) * (1.5 * pulse);
+\tALPHA  = 0.9 * pulse;
+}
+"""
+	var shader := Shader.new()
+	shader.code = shader_code
+	var mat := ShaderMaterial.new()
+	mat.shader = shader
+
+	_hex_highlight = MeshInstance3D.new()
+	_hex_highlight.name = "HexHighlight"
+	_hex_highlight.material_override = mat
+	_globe_root.add_child(_hex_highlight)
+	_update_hex_highlight()
+
+func _update_hex_highlight() -> void:
+	if _hex_data.is_empty() or _hex_highlight == null:
+		return
+	var poly: PackedVector3Array = _hex_data[_selected_hex].p
+	var n := poly.size()
+	var sum := Vector3.ZERO
+	for v in poly:
+		sum += v
+	var center := (sum / n).normalized() * 1.012
+
+	var verts := PackedVector3Array()
+	for i in range(n):
+		verts.append(center)
+		verts.append(poly[i] * 1.012)
+		verts.append(poly[(i + 1) % n] * 1.012)
+
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	var arr_mesh := ArrayMesh.new()
+	arr_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_hex_highlight.mesh = arr_mesh
+
+func _navigate_hex(dir: Vector2) -> void:
+	if _hex_data.is_empty():
+		return
+	var neighbors: Array = _hex_data[_selected_hex].n
+	if neighbors.is_empty():
+		return
+	var glob_basis  := _globe_root.global_transform.basis
+	var cam_right   := _camera.global_transform.basis.x
+	var cam_up      := _camera.global_transform.basis.y
+	var cur_world   := glob_basis * (_hex_data[_selected_hex].c as Vector3)
+	var best: int   = int(neighbors[0])
+	var best_score  := -INF
+	for ni in neighbors:
+		var nw    := glob_basis * (_hex_data[int(ni)].c as Vector3)
+		var delta := nw - cur_world
+		var score := delta.dot(cam_right) * dir.x + delta.dot(cam_up) * dir.y
+		if score > best_score:
+			best_score = score
+			best = int(ni)
+	_selected_hex = best
+	_update_hex_highlight()
