@@ -26,6 +26,11 @@ var _chunks:     Dictionary  = {}
 var _elev_noise: FastNoiseLite = null
 var _warp_noise: FastNoiseLite = null
 
+var _static_mode:   bool            = false
+var _static_width:  int             = 0
+var _static_height: int             = 0
+var _static_tiles:  PackedByteArray = PackedByteArray()
+
 func configure_seed(seed_val: int) -> void:
 	_elev_noise = FastNoiseLite.new()
 	_elev_noise.seed               = seed_val
@@ -43,8 +48,18 @@ func configure_seed(seed_val: int) -> void:
 
 	_chunks.clear()
 
+func load_static_map(data: Dictionary) -> void:
+	_static_width  = int(data["width"])
+	_static_height = int(data["height"])
+	var raw: Array = data["tiles"]
+	_static_tiles.resize(_static_width * _static_height)
+	for i in range(_static_tiles.size()):
+		_static_tiles[i] = int(raw[i])
+	_static_mode = true
+	_chunks.clear()
+
 func draw_tiles(canvas: CanvasItem, origin: Vector2, viewport: Vector2, tile_w: float, tile_h: float, render_margin: int = 2) -> void:
-	if _elev_noise == null:
+	if _elev_noise == null and not _static_mode:
 		_draw_fallback_tiles(canvas, origin, viewport, tile_w, tile_h)
 		return
 
@@ -114,6 +129,10 @@ func _ensure_chunk(cx: int, cy: int) -> void:
 	_chunks[key] = data
 
 func _get_tile(tx: int, ty: int) -> int:
+	if _static_mode:
+		if tx < 0 or tx >= _static_width or ty < 0 or ty >= _static_height:
+			return T_DEEP
+		return int(_static_tiles[ty * _static_width + tx])
 	var cx: int = floori(float(tx) / chunk_size)
 	var cy: int = floori(float(ty) / chunk_size)
 	_ensure_chunk(cx, cy)
@@ -123,7 +142,7 @@ func _get_tile(tx: int, ty: int) -> int:
 	return _chunks[key][(tx - cx * chunk_size) * chunk_size + (ty - cy * chunk_size)]
 
 func get_tile_at(wx: float, wy: float) -> int:
-	if _elev_noise == null:
+	if _elev_noise == null and not _static_mode:
 		return T_SAND
 	return _get_tile(floori(wx), floori(wy))
 

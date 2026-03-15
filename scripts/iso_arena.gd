@@ -66,17 +66,8 @@ var _music_bass_phase: float = 0.0
 var _music_time: float = 0.0
 var _terrain_renderer = TERRAIN_RENDERER_SCRIPT.new()
 
-# ── Spawn positions (world units) ─────────────────────────────────────────────
-const _SPAWNS: Array = [
-	Vector2( 2.0,  2.0),   # top-left
-	Vector2(10.0, 10.0),   # bottom-right
-	Vector2(10.0,  2.0),   # top-right
-	Vector2( 2.0, 10.0),   # bottom-left
-	Vector2( 6.0,  2.0),   # top-center
-	Vector2( 6.0, 10.0),   # bottom-center
-	Vector2( 2.0,  6.0),   # left-center
-	Vector2(10.0,  6.0),   # right-center
-]
+# ── Spawn positions (world units) — populated by _load_geo_map() ──────────────
+var _SPAWNS: Array = []
 
 const _MUSIC_SAMPLE_RATE: float = 44100.0
 const _MUSIC_STEP_SECONDS: float = 0.26
@@ -102,6 +93,7 @@ const _HUD_TEXT_MUTED: Color = Color(0.79, 0.70, 0.60, 1.0)
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
 func _ready() -> void:
 	_register_inputs()
+	_load_geo_map()
 	_origin = get_viewport_rect().size * 0.5
 	_spawn_players()
 	_setup_game_music()
@@ -143,11 +135,6 @@ func _ready() -> void:
 			multiplayer.peer_connected.connect(_on_peer_connected)
 		if not multiplayer.peer_disconnected.is_connected(_on_peer_disconnected):
 			multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-		# Host picks the seed and broadcasts it; clients wait for the RPC.
-		if multiplayer.is_server():
-			_init_world_seed.rpc(randi())
-	else:
-		_init_world_seed(randi())   # offline: generate immediately
 	queue_redraw()
 
 func _exit_tree() -> void:
@@ -157,25 +144,30 @@ func _exit_tree() -> void:
 		game_music_player.stop()
 	_music_playback = null
 
-# ── World seed — RPC ensures every peer uses the same noise ───────────────────
-@rpc("authority", "call_local", "reliable")
-func _init_world_seed(seed_val: int) -> void:
+# ── Static map loader — all peers load the same committed asset ───────────────
+func _load_geo_map() -> void:
+	const MAP_PATH := "res://assets/maps/caribbean.json"
+	var f := FileAccess.open(MAP_PATH, FileAccess.READ)
+	if f == null:
+		push_error("iso_arena: cannot open %s" % MAP_PATH)
+		# Fallback: hardcoded spawns, noise path used if seed is set elsewhere
+		_SPAWNS = [
+			Vector2( 2.0,  2.0), Vector2(10.0, 10.0),
+			Vector2(10.0,  2.0), Vector2( 2.0, 10.0),
+			Vector2( 6.0,  2.0), Vector2( 6.0, 10.0),
+			Vector2( 2.0,  6.0), Vector2(10.0,  6.0),
+		]
+		return
+	var parsed = JSON.parse_string(f.get_as_text())
+	f.close()
+	if parsed == null:
+		push_error("iso_arena: failed to parse caribbean.json")
+		return
 	_terrain_renderer.chunk_size = CHUNK_SIZE
-	_terrain_renderer.configure_seed(seed_val)
-	for p in _players:
-		var dw := _find_deep_water_near(p.wx, p.wy)
-		p.wx = dw.x
-		p.wy = dw.y
-	queue_redraw()
-
-func _find_deep_water_near(wx: float, wy: float) -> Vector2:
-	for radius in range(0, 30):
-		for dx in range(-radius, radius + 1):
-			for dy in range(-radius, radius + 1):
-				if abs(dx) == radius or abs(dy) == radius:
-					if _terrain_renderer.get_tile_at(wx + dx, wy + dy) == IsoTerrainRenderer.T_DEEP:
-						return Vector2(wx + dx + 0.5, wy + dy + 0.5)
-	return Vector2(wx, wy)
+	_terrain_renderer.load_static_map(parsed)
+	_SPAWNS = []
+	for sp in parsed["spawns"]:
+		_SPAWNS.append(Vector2(float(sp[0]), float(sp[1])))
 
 # ── Coordinate helpers ────────────────────────────────────────────────────────
 func _w2s(wx: float, wy: float) -> Vector2:
@@ -329,7 +321,7 @@ func _spawn_players() -> void:
 			break
 
 	for i in range(count):
-		var start: Vector2 = _SPAWNS[i]
+		var start: Vector2 = _SPAWNS[i % maxi(_SPAWNS.size(), 1)]
 		_players.append({
 			peer_id    = peer_ids[i],
 			wx         = start.x,
