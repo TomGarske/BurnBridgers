@@ -1,5 +1,6 @@
 extends Control
 const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
+const ProceduralMusicScript := preload("res://scripts/audio/procedural_music.gd")
 
 # ---------------------------------------------------------------------------
 # Node references
@@ -21,33 +22,13 @@ const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
 @onready var settings_popup: PopupPanel = $SettingsPopup
 @onready var music_toggle: CheckButton = $SettingsPopup/SettingsMargin/VBoxContainer/MusicToggle
 
-var _music_playback: AudioStreamGeneratorPlayback = null
-var _music_phase: float = 0.0
-var _music_bass_phase: float = 0.0
-var _music_time: float = 0.0
+var _music_engine = ProceduralMusicScript.new()
 var _menu_index: int = 0
 var _menu_up_prev: bool = false
 var _menu_down_prev: bool = false
 var _menu_accept_prev: bool = false
 var _menu_cancel_prev: bool = false
 var _controller_debug_label: Label = null
-
-const _MUSIC_SAMPLE_RATE: float = 44100.0
-const _MUSIC_STEP_SECONDS: float = 0.34
-const _MUSIC_STEPS_PER_CHORD: int = 8
-const _MUSIC_PROGRESS_ROOTS: Array[float] = [82.41, 69.30, 51.91, 55.00] # E, C#, G#, A
-const _MUSIC_MELODY_BY_CHORD: Array[Array] = [
-	[329.63, 369.99, 415.30, 493.88, 415.30, 369.99, 329.63, 369.99], # E
-	[277.18, 329.63, 369.99, 415.30, 369.99, 329.63, 277.18, 329.63], # C#m
-	[415.30, 369.99, 329.63, 369.99, 415.30, 493.88, 415.30, 369.99], # G#m
-	[440.00, 415.30, 369.99, 329.63, 369.99, 415.30, 440.00, 369.99], # A
-]
-const _MUSIC_CHORD_TONES: Array[Array] = [
-	[329.63, 415.30, 493.88], # E
-	[277.18, 329.63, 415.30], # C#m
-	[415.30, 493.88, 622.25], # G#m
-	[440.00, 554.37, 659.25], # A
-]
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -283,49 +264,13 @@ func _update_controller_debug_line() -> void:
 func _setup_menu_music() -> void:
 	if menu_music_player == null:
 		return
-	var stream := AudioStreamGenerator.new()
-	stream.mix_rate = int(_MUSIC_SAMPLE_RATE)
-	stream.buffer_length = 0.25
-	menu_music_player.stream = stream
-	menu_music_player.volume_db = -16.0
-	if GameManager != null and GameManager.music_enabled:
-		menu_music_player.play()
-	_music_playback = menu_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
+	_music_engine.configure_preset("menu")
+	_music_engine.setup(menu_music_player, GameManager != null and GameManager.music_enabled)
 
 func _stream_menu_music() -> void:
-	if _music_playback == null or GameManager == null or not GameManager.music_enabled:
+	if GameManager == null:
 		return
-	var intensity: float = clampf(GameManager.music_intensity, 0.2, 2.0)
-	var speed: float = clampf(GameManager.music_speed, 0.5, 1.8)
-	var tone: float = clampf(GameManager.music_tone, 0.7, 1.4)
-	var step_seconds: float = _MUSIC_STEP_SECONDS / speed
-	var frames_available: int = _music_playback.get_frames_available()
-	for _i in range(frames_available):
-		var step_idx: int = int(floor(_music_time / step_seconds))
-		var chord_idx: int = int(floor(float(step_idx) / _MUSIC_STEPS_PER_CHORD)) % _MUSIC_PROGRESS_ROOTS.size()
-		var step_in_chord: int = step_idx % _MUSIC_STEPS_PER_CHORD
-		var lead_freq: float = _music_lead_for_step(chord_idx, step_in_chord) * tone
-		var root_freq: float = _MUSIC_PROGRESS_ROOTS[chord_idx] * tone
-		var chord_tones: Array = _MUSIC_CHORD_TONES[chord_idx]
-		_music_phase += TAU * lead_freq / _MUSIC_SAMPLE_RATE
-		_music_bass_phase += TAU * root_freq / _MUSIC_SAMPLE_RATE
-		var lead_square: float = 1.0 if sin(_music_phase) >= 0.0 else -1.0
-		var lead_sine: float = sin(_music_phase * 0.5)
-		var bass_square: float = 1.0 if sin(_music_bass_phase) >= 0.0 else -1.0
-		var pad: float = (
-			sin(_music_time * TAU * float(chord_tones[0]) * tone) +
-			sin(_music_time * TAU * float(chord_tones[1]) * tone) +
-			sin(_music_time * TAU * float(chord_tones[2]) * tone)
-		) / 3.0
-		var step_phase: float = fmod(_music_time, step_seconds) / step_seconds
-		var gate: float = 0.94 - step_phase * 0.10
-		var sample: float = (lead_square * 0.040 + lead_sine * 0.026 + bass_square * 0.018 + pad * 0.026) * gate * intensity
-		sample = clampf(sample, -0.95, 0.95)
-		_music_playback.push_frame(Vector2(sample, sample))
-		_music_time += 1.0 / _MUSIC_SAMPLE_RATE
-
-func _music_lead_for_step(chord_idx: int, step_in_chord: int) -> float:
-	return float(_MUSIC_MELODY_BY_CHORD[chord_idx][step_in_chord])
+	_music_engine.stream_frames(GameManager)
 
 func _exit_tree() -> void:
 	if SteamManager != null:
@@ -339,9 +284,7 @@ func _exit_tree() -> void:
 			SteamManager.lobby_list_updated.disconnect(_on_lobby_list_updated)
 	if GameManager != null and GameManager.music_enabled_changed.is_connected(_on_music_enabled_changed):
 		GameManager.music_enabled_changed.disconnect(_on_music_enabled_changed)
-	if menu_music_player != null:
-		menu_music_player.stop()
-	_music_playback = null
+	_music_engine.teardown()
 
 # ---------------------------------------------------------------------------
 # Button handlers
@@ -396,16 +339,9 @@ func _sync_music_toggle() -> void:
 	music_toggle.set_pressed_no_signal(GameManager.music_enabled)
 
 func _apply_music_enabled_state() -> void:
-	if menu_music_player == null or GameManager == null:
+	if GameManager == null:
 		return
-	if GameManager.music_enabled:
-		if not menu_music_player.playing:
-			menu_music_player.play()
-		if _music_playback == null:
-			_music_playback = menu_music_player.get_stream_playback() as AudioStreamGeneratorPlayback
-	else:
-		menu_music_player.stop()
-		_music_playback = null
+	_music_engine.set_enabled(GameManager.music_enabled)
 
 func _on_quit_confirmed() -> void:
 	get_tree().quit()
