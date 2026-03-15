@@ -42,7 +42,8 @@ const SPEED_DRAG_SENS:  float = 0.05
 const TIME_SCALE_STEPS: Array = [
 	0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
 	10, 20, 30, 40, 50, 60, 70, 80, 90,
-	100, 200, 300, 400, 500, 600, 700, 800, 900, 1000
+	100, 200, 300, 400, 500, 600, 700, 800, 900,
+	1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000
 ]
 var   _sim_angle:       float = 0.0
 var   _time_scale:      float = 1.0
@@ -423,7 +424,7 @@ func _update_focus_label() -> void:
 	if _focus_label == null:
 		return
 	_focus_label.text = "[1] Earth  |  2: Moon" if _focus == Focus.EARTH \
-	                  else "1: Earth  |  [2] Moon"
+					  else "1: Earth  |  [2] Moon"
 
 
 func _step_time_scale(direction: int) -> void:
@@ -447,11 +448,5 @@ func _update_timescale_label() -> void:
 		return
 	if _time_scale == 0.0:
 		_time_scale_label.text = "PAUSED"
-	elif _time_scale < 60.0:
-		_time_scale_label.text = "x%d" % int(_time_scale)
-	elif _time_scale < 3600.0:
-		_time_scale_label.text = "%.1fmin/s" % (_time_scale / 60.0)
-	elif _time_scale < 86400.0:
-		_time_scale_label.text = "%.1fh/s" % (_time_scale / 3600.0)
 	else:
-		_time_scale_label.text = "%.1fd/s" % (_time_scale / 86400.0)
+		_time_scale_label.text = "x%d" % int(_time_scale)
