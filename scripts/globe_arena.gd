@@ -35,11 +35,12 @@ const AXIAL_TILT_DEG: float = 23.5
 var   _default_quat:  Quaternion
 
 # ── Time-driven rotation ──────────────────────────────────────────────────────
-# 1 real minute = 1 full rotation  →  6 °/s at time_scale 1.0
-const BASE_DEG_PER_SEC: float = 15.0   # 360° / 24 s = 1 rotation per 24 sec
-const TIME_SCALE_MIN:   float = 0.0
-const TIME_SCALE_MAX:   float = 120.0
+# At time_scale 1.0: Earth rotates 15°/s (one rotation per 24 game-seconds).
+# 1 game-second = 1 real hour.  time_scale N = N hours/s of simulated time.
+const BASE_DEG_PER_SEC: float = 15.0
 const SPEED_DRAG_SENS:  float = 0.05
+# Stepped presets (hours/s of simulated time)
+const TIME_SCALE_STEPS: Array = [0.0, 0.5, 1.0, 2.0, 4.0, 8.0, 24.0, 48.0, 120.0, 240.0, 720.0]
 var   _sim_angle:       float = 0.0
 var   _time_scale:      float = 1.0
 
@@ -54,7 +55,8 @@ var   _cam_dir: Vector3 = Vector3.ZERO  # smoothed world-space look direction
 var   _cam_up:  Vector3 = Vector3.UP    # smoothed up vector — always tracks pole
 
 # ── HUD ───────────────────────────────────────────────────────────────────────
-var _focus_label: Label = null
+var _focus_label:      Label = null
+var _time_scale_label: Label = null
 
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────────
@@ -73,6 +75,7 @@ func _process(delta: float) -> void:
 	_sim_angle       += BASE_DEG_PER_SEC * _time_scale * delta
 	_cam_dist         = lerpf(_cam_dist, _cam_dist_target, ZOOM_SMOOTH * delta)
 	_moon_cam_dist    = lerpf(_moon_cam_dist, _moon_cam_dist_target, ZOOM_SMOOTH * delta)
+	_moon.time_scale  = _time_scale
 
 	_update_globe()
 	_update_camera(delta)
@@ -81,6 +84,7 @@ func _process(delta: float) -> void:
 func _reset_view() -> void:
 	_sim_angle  = 0.0
 	_time_scale = 1.0
+	_update_timescale_label()
 
 # ── Input ─────────────────────────────────────────────────────────────────────
 func _unhandled_input(event: InputEvent) -> void:
@@ -122,6 +126,12 @@ func _unhandled_input(event: InputEvent) -> void:
 						_navigate_hex(Vector2(0.0, -1.0))
 					else:
 						_moon.navigate(Vector2(0.0, -1.0), _camera.global_transform.basis.x, _camera.global_transform.basis.y)
+				KEY_EQUAL:  # + / =
+					if not key.echo:
+						_step_time_scale(1)
+				KEY_MINUS:
+					if not key.echo:
+						_step_time_scale(-1)
 				KEY_1:
 					if not key.echo:
 						_focus = Focus.EARTH
@@ -355,11 +365,12 @@ func _navigate_hex(dir: Vector2) -> void:
 	_update_hex_highlight()
 
 
-# ── Focus HUD ─────────────────────────────────────────────────────────────────
+# ── HUD setup ─────────────────────────────────────────────────────────────────
 func _add_focus_hud() -> void:
 	var canvas := CanvasLayer.new()
 	add_child(canvas)
 
+	# Focus label — bottom-left
 	_focus_label = Label.new()
 	_focus_label.anchor_left   = 0.0
 	_focus_label.anchor_right  = 0.0
@@ -373,11 +384,71 @@ func _add_focus_hud() -> void:
 	canvas.add_child(_focus_label)
 	_update_focus_label()
 
+	# Timescale row — bottom-right: [−]  label  [+]
+	var hbox := HBoxContainer.new()
+	hbox.anchor_left   = 1.0
+	hbox.anchor_right  = 1.0
+	hbox.anchor_top    = 1.0
+	hbox.anchor_bottom = 1.0
+	hbox.offset_left   = -200.0
+	hbox.offset_top    = -44.0
+	hbox.offset_right  = -12.0
+	hbox.offset_bottom = -12.0
+	hbox.alignment     = BoxContainer.ALIGNMENT_END
+	canvas.add_child(hbox)
+
+	var btn_slow := Button.new()
+	btn_slow.text = "−"
+	btn_slow.pressed.connect(func(): _step_time_scale(-1))
+	hbox.add_child(btn_slow)
+
+	_time_scale_label = Label.new()
+	_time_scale_label.custom_minimum_size = Vector2(110, 0)
+	_time_scale_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_time_scale_label.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85, 0.8))
+	hbox.add_child(_time_scale_label)
+
+	var btn_fast := Button.new()
+	btn_fast.text = "+"
+	btn_fast.pressed.connect(func(): _step_time_scale(1))
+	hbox.add_child(btn_fast)
+
+	_update_timescale_label()
+
 
 func _update_focus_label() -> void:
 	if _focus_label == null:
 		return
-	if _focus == Focus.EARTH:
-		_focus_label.text = "[1] Earth  |  2: Moon"
+	_focus_label.text = "[1] Earth  |  2: Moon" if _focus == Focus.EARTH \
+	                  else "1: Earth  |  [2] Moon"
+
+
+func _step_time_scale(direction: int) -> void:
+	var steps: Array = TIME_SCALE_STEPS
+	if direction > 0:
+		for v in steps:
+			if v > _time_scale + 0.001:
+				_time_scale = v
+				_update_timescale_label()
+				return
 	else:
-		_focus_label.text = "1: Earth  |  [2] Moon"
+		for i in range(steps.size() - 1, -1, -1):
+			if steps[i] < _time_scale - 0.001:
+				_time_scale = steps[i]
+				_update_timescale_label()
+				return
+
+
+func _update_timescale_label() -> void:
+	if _time_scale_label == null:
+		return
+	if _time_scale == 0.0:
+		_time_scale_label.text = "PAUSED"
+		return
+	# 1 game-second = _time_scale real hours of simulated time
+	if _time_scale >= 24.0:
+		_time_scale_label.text = "%.0fd/s" % (_time_scale / 24.0)
+	elif _time_scale >= 1.0:
+		_time_scale_label.text = "%.1fh/s" % _time_scale
+	else:
+		_time_scale_label.text = "%.0fm/s" % (_time_scale * 60.0)
