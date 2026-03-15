@@ -1,6 +1,7 @@
 [gd_scene format=3 uid="uid://cw8mctlqkkxjd"]
 
 [ext_resource type="Script" path="res://scripts/globe_arena.gd" id="1_globe"]
+[ext_resource type="Script" path="res://scripts/moon.gd" id="2_moon"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.02, 0.02, 0.05, 1)
@@ -66,3 +67,6 @@ mesh = SubResource("SphereMesh_globe")
 [node name="Atmosphere" type="MeshInstance3D" parent="GlobeRoot" unique_id=8824137]
 material_override = SubResource("StandardMaterial3D_atmo_default")
 mesh = SubResource("SphereMesh_atmo")
+
+[node name="Moon" type="Node3D" parent="."]
+script = ExtResource("2_moon")

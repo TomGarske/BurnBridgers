@@ -4,6 +4,17 @@ extends Node3D
 @onready var _globe_root: Node3D         = $GlobeRoot
 @onready var _globe_mesh: MeshInstance3D = $GlobeRoot/Globe
 @onready var _atmo_mesh:  MeshInstance3D = $GlobeRoot/Atmosphere
+@onready var _moon:       Node3D         = $Moon
+
+# ── Focus ─────────────────────────────────────────────────────────────────────
+enum Focus { EARTH, MOON }
+var _focus: Focus = Focus.EARTH
+
+const MOON_CAM_DIST_DEFAULT: float = 0.8
+const MOON_CAM_DIST_MIN:     float = 0.4
+const MOON_CAM_DIST_MAX:     float = 4.0
+var _moon_cam_dist:        float = MOON_CAM_DIST_DEFAULT
+var _moon_cam_dist_target: float = MOON_CAM_DIST_DEFAULT
 
 # ── Orbit camera ──────────────────────────────────────────────────────────────
 const CAM_DIST_MIN:      float = 1.2
@@ -55,8 +66,9 @@ func _ready() -> void:
 	_update_camera(0.0)
 
 func _process(delta: float) -> void:
-	_sim_angle  += BASE_DEG_PER_SEC * _time_scale * delta
-	_cam_dist    = lerpf(_cam_dist, _cam_dist_target, ZOOM_SMOOTH * delta)
+	_sim_angle       += BASE_DEG_PER_SEC * _time_scale * delta
+	_cam_dist         = lerpf(_cam_dist, _cam_dist_target, ZOOM_SMOOTH * delta)
+	_moon_cam_dist    = lerpf(_moon_cam_dist, _moon_cam_dist_target, ZOOM_SMOOTH * delta)
 
 	_update_globe()
 	_update_camera(delta)
@@ -72,18 +84,48 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mbe := event as InputEventMouseButton
 		match mbe.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
-				_cam_dist_target = clampf(_cam_dist_target - ZOOM_STEP, CAM_DIST_MIN, CAM_DIST_MAX)
+				if _focus == Focus.EARTH:
+					_cam_dist_target = clampf(_cam_dist_target - ZOOM_STEP, CAM_DIST_MIN, CAM_DIST_MAX)
+				else:
+					_moon_cam_dist_target = clampf(_moon_cam_dist_target - ZOOM_STEP * 0.1, MOON_CAM_DIST_MIN, MOON_CAM_DIST_MAX)
 			MOUSE_BUTTON_WHEEL_DOWN:
-				_cam_dist_target = clampf(_cam_dist_target + ZOOM_STEP, CAM_DIST_MIN, CAM_DIST_MAX)
+				if _focus == Focus.EARTH:
+					_cam_dist_target = clampf(_cam_dist_target + ZOOM_STEP, CAM_DIST_MIN, CAM_DIST_MAX)
+				else:
+					_moon_cam_dist_target = clampf(_moon_cam_dist_target + ZOOM_STEP * 0.1, MOON_CAM_DIST_MIN, MOON_CAM_DIST_MAX)
 
 	elif event is InputEventKey:
 		var key := event as InputEventKey
 		if key.pressed:
 			match key.keycode:
-				KEY_LEFT:  _navigate_hex(Vector2(-1.0,  0.0))
-				KEY_RIGHT: _navigate_hex(Vector2( 1.0,  0.0))
-				KEY_UP:    _navigate_hex(Vector2( 0.0,  1.0))
-				KEY_DOWN:  _navigate_hex(Vector2( 0.0, -1.0))
+				KEY_LEFT:
+					if _focus == Focus.EARTH:
+						_navigate_hex(Vector2(-1.0, 0.0))
+					else:
+						_moon.navigate(Vector2(-1.0, 0.0), _camera.global_transform.basis.x, _camera.global_transform.basis.y)
+				KEY_RIGHT:
+					if _focus == Focus.EARTH:
+						_navigate_hex(Vector2(1.0, 0.0))
+					else:
+						_moon.navigate(Vector2(1.0, 0.0), _camera.global_transform.basis.x, _camera.global_transform.basis.y)
+				KEY_UP:
+					if _focus == Focus.EARTH:
+						_navigate_hex(Vector2(0.0, 1.0))
+					else:
+						_moon.navigate(Vector2(0.0, 1.0), _camera.global_transform.basis.x, _camera.global_transform.basis.y)
+				KEY_DOWN:
+					if _focus == Focus.EARTH:
+						_navigate_hex(Vector2(0.0, -1.0))
+					else:
+						_moon.navigate(Vector2(0.0, -1.0), _camera.global_transform.basis.x, _camera.global_transform.basis.y)
+				KEY_1:
+					if not key.echo:
+						_focus = Focus.EARTH
+						_cam_dir = Vector3.ZERO
+				KEY_2:
+					if not key.echo:
+						_focus = Focus.MOON
+						_cam_dir = Vector3.ZERO
 				KEY_R:
 					if not key.echo:
 						_reset_view()
@@ -95,6 +137,13 @@ func _update_globe() -> void:
 
 # ── Orbit camera ──────────────────────────────────────────────────────────────
 func _update_camera(delta: float) -> void:
+	if _focus == Focus.MOON:
+		_update_camera_moon(delta)
+	else:
+		_update_camera_earth(delta)
+
+
+func _update_camera_earth(delta: float) -> void:
 	if not _hex_data.is_empty():
 		var target := (_globe_root.global_transform.basis * (_hex_data[_selected_hex].c as Vector3)).normalized()
 		if _cam_dir.is_zero_approx():
@@ -112,15 +161,26 @@ func _update_camera(delta: float) -> void:
 	_camera.look_at(Vector3.ZERO, _cam_up)
 
 
+func _update_camera_moon(delta: float) -> void:
+	var moon_center := _moon.get_world_center()
+	var hex_world   := _moon.get_selected_hex_world()
+	var target      := (hex_world - moon_center).normalized()
+
+	if _cam_dir.is_zero_approx():
+		_cam_dir = target
+	else:
+		_cam_dir = _cam_dir.slerp(target, 1.0 - exp(-CAM_TRACK_SPEED * delta))
+
+	_camera.position = moon_center + _cam_dir * _moon_cam_dist
+	_camera.look_at(moon_center, Vector3.UP)
+
+
 # ── Texture loading ────────────────────────────────────────────────────────────
 func _apply_globe_texture() -> void:
-	var img := Image.load_from_file("res://assets/maps/globe.png")
-	if img == null:
+	var tex := load("res://assets/maps/globe.png") as Texture2D
+	if tex == null:
 		push_error("globe_arena: cannot load res://assets/maps/globe.png")
 		return
-	img.convert(Image.FORMAT_RGB8)
-	img.generate_mipmaps()
-	var tex := ImageTexture.create_from_image(img)
 	var mat := StandardMaterial3D.new()
 	mat.albedo_texture = tex
 	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
@@ -145,13 +205,10 @@ func _apply_atmosphere_material() -> void:
 
 # ── Goldberg polyhedron overlay ───────────────────────────────────────────────
 func _add_goldberg_overlay() -> void:
-	var img := Image.load_from_file("res://assets/maps/goldberg_edges.png")
-	if img == null:
+	var tex := load("res://assets/maps/goldberg_edges.png") as Texture2D
+	if tex == null:
 		push_error("globe_arena: cannot load res://assets/maps/goldberg_edges.png")
 		return
-	img.convert(Image.FORMAT_RGBA8)
-	img.generate_mipmaps()
-	var tex := ImageTexture.create_from_image(img)
 
 	var shader_code := """
 shader_type spatial;

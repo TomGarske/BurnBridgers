@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Generate a GP(32,0) Goldberg polyhedron edge map (4096x2048 equirectangular PNG).
+"""Generate a GP(M,0) Goldberg polyhedron edge map (4096x2048 equirectangular PNG).
 
 Run from the repo root:
-    python tools/generate_goldberg.py
+    python tools/generate_goldberg.py            # default M=32, Earth grid
+    python tools/generate_goldberg.py --m 15 --prefix moon_  # M=15, Moon grid
 
-Output: assets/maps/goldberg_edges.png
+Output: assets/maps/{prefix}goldberg_edges.png
+        assets/data/{prefix}goldberg_data.json
 """
 
+import argparse
 import json
 import math
 import sys
@@ -19,14 +22,25 @@ except ImportError:
     sys.exit("Pillow is required: pip install Pillow")
 
 # ---------------------------------------------------------------------------
-# Constants
+# CLI
 # ---------------------------------------------------------------------------
-M = 32          # subdivision frequency
-T = M * M       # triangulation number = 1024
-EXPECTED_FACES    = 10 * T + 2   # 10242
+_parser = argparse.ArgumentParser(description="Generate Goldberg polyhedron assets")
+_parser.add_argument("--m",      type=int, default=32,  dest="m_val",
+                     help="Subdivision frequency (default 32)")
+_parser.add_argument("--prefix", type=str, default="",   dest="prefix",
+                     help="Output filename prefix, e.g. 'moon_'")
+_args = _parser.parse_args()
+
+# ---------------------------------------------------------------------------
+# Constants (derived from CLI)
+# ---------------------------------------------------------------------------
+M = _args.m_val
+PREFIX = _args.prefix
+T = M * M
+EXPECTED_FACES    = 10 * T + 2
 EXPECTED_PENTS    = 12
-EXPECTED_HEXES    = 10230
-EXPECTED_EDGES    = 30 * T       # 30720
+EXPECTED_HEXES    = 10 * T - 10
+EXPECTED_EDGES    = 30 * T
 
 RENDER_W = 8192
 RENDER_H = 4096
@@ -287,7 +301,7 @@ def export_json(verts, goldberg_faces, geo_faces, out_path: Path):
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    print(f"GP({M},0) geodesic subdivision…")
+    print(f"GP({M},0) geodesic subdivision… (prefix='{PREFIX}')")
     verts, faces = subdivide_icosahedron(M)
     print(f"  Geodesic verts: {len(verts)}  (expected {EXPECTED_FACES})")
     print(f"  Geodesic faces: {len(faces)}  (expected {20 * T})")
@@ -319,11 +333,11 @@ def main():
 
     print(f"OK: {len(goldberg_faces)} faces ({pent_count} pentagons, {hex_count} hexagons), {len(dual_edges)} edges")
 
-    out_path = Path(__file__).parent.parent / "assets" / "maps" / "goldberg_edges.png"
+    out_path = Path(__file__).parent.parent / "assets" / "maps" / f"{PREFIX}goldberg_edges.png"
     print(f"Rendering equirectangular map → {out_path}")
     render(centroids, dual_edges, out_path)
 
-    json_path = Path(__file__).parent.parent / "assets" / "data" / "goldberg_data.json"
+    json_path = Path(__file__).parent.parent / "assets" / "data" / f"{PREFIX}goldberg_data.json"
     print(f"Exporting nav data → {json_path}")
     export_json(verts, goldberg_faces, faces, json_path)
 
