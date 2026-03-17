@@ -1,5 +1,7 @@
 extends Node2D
 
+signal hex_clicked(coords: Vector2i)
+
 ## Strategy Game — 180×90 flat-top hex world map.
 ##
 ## Terrain is classified from Natural Earth GeoJSON (land polygons + bathymetry isobaths).
@@ -28,6 +30,8 @@ const ZOOM_STEP := 0.1
 
 const TERRAIN_OVERRIDE_SAVE_PATH := "user://hex_terrain_overrides.json"
 
+const SPAWN_HEX := Vector2i(90, 45)
+
 const TERRAIN_ATLAS_COORDS: Dictionary = {
 	"deep_ocean":    Vector2i(0, 0),
 	"shallow_ocean": Vector2i(1, 0),
@@ -36,6 +40,7 @@ const TERRAIN_ATLAS_COORDS: Dictionary = {
 	"surface_water": Vector2i(4, 0),
 }
 const HIGHLIGHT_ATLAS_COORD := Vector2i(5, 0)
+const FOG_ATLAS_COORD       := Vector2i(6, 0)
 
 # Terrain colors for built-in atlas
 const _BUILTIN_COLORS: Array[Color] = [
@@ -45,6 +50,7 @@ const _BUILTIN_COLORS: Array[Color] = [
 	Color("#4D9933"),  # land
 	Color("#4DB3E6"),  # surface_water
 	Color("#FFFF00"),  # highlight
+	Color(0.0, 0.0, 0.0, 0.7),  # fog
 ]
 
 # ---------------------------------------------------------------------------
@@ -77,6 +83,9 @@ var _camera: Camera2D
 var _hover_label: Label
 var _hover_panel: Panel
 var _terrain_creator_layer: CanvasLayer
+var _fog_layer: TileMapLayer
+var _creature_token_layer: Node2D
+var _creature_panel_layer: CanvasLayer
 
 # Pinned selection (set when T is pressed)
 var _pinned_cell: Vector2i = Vector2i(-1, -1)
@@ -94,6 +103,9 @@ func _ready() -> void:
 	_hover_panel           = $UILayer/HoverPanel
 	_hover_label           = $UILayer/HoverPanel/HoverLabel
 	_terrain_creator_layer = $TerrainCreatorLayer if has_node("TerrainCreatorLayer") else null
+	_fog_layer             = $FogLayer if has_node("FogLayer") else null
+	_creature_token_layer  = $CreatureTokenLayer if has_node("CreatureTokenLayer") else null
+	_creature_panel_layer  = $CreaturePanelLayer if has_node("CreaturePanelLayer") else null
 
 	_setup_noise()
 	_create_and_assign_tile_set()
@@ -103,11 +115,21 @@ func _ready() -> void:
 	_load_terrain_overrides()
 	_update_chunks()
 
+	if _fog_layer:
+		_fog_layer.tile_set = _tile_set
+		_fill_fog()
+
 	# Center camera on the middle of the map
 	_camera.global_position = _terrain_layer.map_to_local(Vector2i(GRID_WIDTH / 2.0, GRID_HEIGHT / 2.0))
 
 	# Listen for terrain registry changes (custom terrain add/remove/edit)
 	TerrainDefinitions.terrain_updated.connect(_on_terrain_definitions_changed)
+
+	# Wire up creature movement singleton
+	CreatureMovement.set_strategy_game(self)
+
+	# Wire up creature panel
+	_wire_creature_panel()
 
 	set_process_input(true)
 	set_process(true)
@@ -151,6 +173,7 @@ func _generate_atlas_texture() -> ImageTexture:
 		if col == 5:  # highlight tile — outline only so terrain color shows through
 			_draw_hex_outline_on_image(img, col * 64, _BUILTIN_COLORS[col], 3)
 		else:
+			# col 6 = fog tile — solid fill with alpha
 			_draw_hex_on_image(img, col * 64, _BUILTIN_COLORS[col])
 	return ImageTexture.create_from_image(img)
 
@@ -614,6 +637,103 @@ func _update_hover(cell: Vector2i) -> void:
 	_hovered_cell = cell
 
 # ---------------------------------------------------------------------------
+# Fog of war
+# ---------------------------------------------------------------------------
+
+func _fill_fog() -> void:
+	if not _fog_layer:
+		return
+	for col in GRID_WIDTH:
+		for row in GRID_HEIGHT:
+			_fog_layer.set_cell(Vector2i(col, row), ATLAS_SOURCE_ID, FOG_ATLAS_COORD)
+
+
+func reveal_hexes(center: Vector2i, radius: int) -> void:
+	if not _fog_layer:
+		return
+	_fog_layer.erase_cell(center)
+	var visited: Dictionary = {center: true}
+	var frontier: Array[Vector2i] = [center]
+	for _r in radius:
+		var next_frontier: Array[Vector2i] = []
+		for cell: Vector2i in frontier:
+			for neighbor: Vector2i in _fog_layer.get_surrounding_cells(cell):
+				if not visited.has(neighbor):
+					visited[neighbor] = true
+					_fog_layer.erase_cell(neighbor)
+					next_frontier.append(neighbor)
+		frontier = next_frontier
+
+
+func refresh_creature_tokens() -> void:
+	if _creature_token_layer:
+		_creature_token_layer.queue_redraw()
+
+# ---------------------------------------------------------------------------
+# Hex spatial helpers
+# ---------------------------------------------------------------------------
+
+func get_hex_neighbors(cell: Vector2i) -> Array[Vector2i]:
+	if _fog_layer:
+		return _fog_layer.get_surrounding_cells(cell)
+	if _terrain_layer:
+		return _terrain_layer.get_surrounding_cells(cell)
+	return []
+
+
+func hex_to_world(cell: Vector2i) -> Vector2:
+	return _terrain_layer.map_to_local(cell)
+
+# ---------------------------------------------------------------------------
+# Creature panel wiring
+# ---------------------------------------------------------------------------
+
+func _wire_creature_panel() -> void:
+	if not _creature_panel_layer:
+		return
+	var builder  := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/CreatureBuilder")
+	var bucket   := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/CharacterBucket")
+	var stats    := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/CreatureStatsPanel")
+	var end_turn := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/ButtonRow/EndTurn")
+	var attr_btn := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/ButtonRow/Attributes")
+	var attr_editor := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/AttributeCreator")
+
+	if builder and bucket and stats:
+		builder.creature_confirmed.connect(
+			func(creature_data: Dictionary) -> void:
+				bucket.add_creature(creature_data)
+		)
+		bucket.creature_selected_in_bucket.connect(stats.show_creature_by_id)
+		stats.send_to_hex_world_pressed.connect(_on_send_to_hex)
+		stats.explore_pressed.connect(CreatureMovement.start_explore)
+		CreatureMovement.creature_selected.connect(stats.show_creature_by_id)
+
+	if end_turn:
+		end_turn.pressed.connect(CreatureMovement.advance_turn)
+
+	if attr_btn and attr_editor:
+		attr_btn.pressed.connect(func() -> void: attr_editor.visible = not attr_editor.visible)
+
+
+func _on_send_to_hex(creature_id: String) -> void:
+	# Find creature data from bucket
+	for c: Dictionary in GameState.character_bucket:
+		if c.get("id", "") == creature_id:
+			CreatureMovement.place_creature_on_map(creature_id, c)
+			# Remove from bucket UI
+			var bucket := _creature_panel_layer.get_node_or_null(
+				"SidePanel/VBoxContainer/CharacterBucket") as Node
+			if bucket and bucket.has_method("remove_creature"):
+				bucket.remove_creature(creature_id)
+			return
+
+# ---------------------------------------------------------------------------
 # Input — camera and hex click
 # ---------------------------------------------------------------------------
 
@@ -628,6 +748,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				creator.select_cell(_hovered_cell)
 			get_viewport().set_input_as_handled()
 			return
+		# C — toggle creature panel
+		if event.keycode == KEY_C and _creature_panel_layer:
+			_creature_panel_layer.visible = not _creature_panel_layer.visible
+			get_viewport().set_input_as_handled()
+			return
 
 	# Zoom with mouse wheel
 	if event is InputEventMouseButton:
@@ -640,6 +765,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			_zoom_camera(-ZOOM_STEP)
 			get_viewport().set_input_as_handled()
 			return
+
+		# Left click — select hex / queue creature movement
+		if ev_mb.button_index == MOUSE_BUTTON_LEFT and ev_mb.pressed:
+			var mouse_world := get_global_mouse_position()
+			var local_pos   := _terrain_layer.to_local(mouse_world)
+			var cell        := _terrain_layer.local_to_map(local_pos)
+			if cell.x >= 0 and cell.x < GRID_WIDTH and cell.y >= 0 and cell.y < GRID_HEIGHT:
+				hex_clicked.emit(cell)
+				CreatureMovement.on_hex_clicked(cell)
 
 		# Middle mouse: start/stop pan drag
 		if ev_mb.button_index == MOUSE_BUTTON_MIDDLE:

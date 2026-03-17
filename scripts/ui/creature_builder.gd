@@ -1,0 +1,186 @@
+extends VBoxContainer
+
+## Creature builder UI — point-buy system for designing creatures.
+
+signal creature_confirmed(creature_data: Dictionary)
+
+var _points_remaining: int = PointCostConstants.TOTAL_STARTING_POINTS
+var _creature_counter: int = 0
+
+# Control refs (built dynamically)
+var _name_input: LineEdit
+var _size_buttons: Dictionary = {}    # size_name → Button
+var _movement_checks: Dictionary = {} # movement_id → CheckButton
+var _speed_spin: SpinBox
+var _vision_spin: SpinBox
+var _health_spin: SpinBox
+var _attack_spin: SpinBox
+var _defense_spin: SpinBox
+var _points_label: Label
+var _confirm_button: Button
+
+
+func _ready() -> void:
+	_build_ui()
+
+
+func _build_ui() -> void:
+	# Clear any existing children
+	for child in get_children():
+		child.queue_free()
+
+	# Name row
+	var name_row := HBoxContainer.new()
+	var name_lbl := Label.new()
+	name_lbl.text = "Name:"
+	name_row.add_child(name_lbl)
+	_name_input = LineEdit.new()
+	_name_input.placeholder_text = "Creature name..."
+	_name_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_name_input.text_changed.connect(_update_points)
+	name_row.add_child(_name_input)
+	add_child(name_row)
+
+	# Physical size
+	var size_lbl := Label.new()
+	size_lbl.text = "Physical Size"
+	add_child(size_lbl)
+
+	var size_row := HBoxContainer.new()
+	var btn_group := ButtonGroup.new()
+	for size_name: String in PointCostConstants.PHYSICAL_SIZE_COSTS.keys():
+		var btn := Button.new()
+		btn.text = size_name
+		btn.toggle_mode = true
+		btn.button_group = btn_group
+		btn.toggled.connect(_update_points.unbind(1))
+		size_row.add_child(btn)
+		_size_buttons[size_name] = btn
+	# Default to Small
+	_size_buttons["Small"].button_pressed = true
+	add_child(size_row)
+
+	# Movement type
+	var move_lbl := Label.new()
+	move_lbl.text = "Movement Type"
+	add_child(move_lbl)
+
+	var move_row := HBoxContainer.new()
+	var movement_options := {
+		"land":                   "Land",
+		"air":                    "Air",
+		"water":                  "Water",
+		"deep_ocean_underwater":  "Deep Ocean",
+	}
+	for mt_id: String in movement_options.keys():
+		var cb := CheckButton.new()
+		cb.text = movement_options[mt_id]
+		cb.toggled.connect(_update_points.unbind(1))
+		move_row.add_child(cb)
+		_movement_checks[mt_id] = cb
+	add_child(move_row)
+
+	# Stat grid
+	var grid := GridContainer.new()
+	grid.columns = 2
+
+	_speed_spin  = _make_stat_row(grid, "Movement Speed", 1, 1, 10)
+	_vision_spin = _make_stat_row(grid, "Vision",         3, 1, 20)
+	_health_spin = _make_stat_row(grid, "Health",         0, 0, 20)
+	_attack_spin = _make_stat_row(grid, "Attack",         0, 0, 20)
+	_defense_spin = _make_stat_row(grid, "Defense",       0, 0, 20)
+	add_child(grid)
+
+	# Points remaining row
+	var pts_row := HBoxContainer.new()
+	var pts_lbl := Label.new()
+	pts_lbl.text = "Points Remaining:"
+	pts_row.add_child(pts_lbl)
+	_points_label = Label.new()
+	pts_row.add_child(_points_label)
+	add_child(pts_row)
+
+	# Confirm button
+	_confirm_button = Button.new()
+	_confirm_button.text = "Confirm"
+	_confirm_button.pressed.connect(_on_confirm)
+	add_child(_confirm_button)
+
+	_update_points("")
+
+
+func _make_stat_row(grid: GridContainer, label_text: String,
+		default_val: int, min_val: int, max_val: int) -> SpinBox:
+	var lbl := Label.new()
+	lbl.text = label_text + ":"
+	grid.add_child(lbl)
+	var spin := SpinBox.new()
+	spin.min_value = min_val
+	spin.max_value = max_val
+	spin.value = default_val
+	spin.value_changed.connect(_update_points.unbind(1))
+	grid.add_child(spin)
+	return spin
+
+
+func _get_selected_size() -> String:
+	for size_name: String in _size_buttons.keys():
+		if _size_buttons[size_name].button_pressed:
+			return size_name
+	return "Small"
+
+
+func _get_selected_movement_types() -> Array[String]:
+	var result: Array[String] = []
+	for mt_id: String in _movement_checks.keys():
+		if _movement_checks[mt_id].button_pressed:
+			result.append(mt_id)
+	return result
+
+
+func _calculate_cost() -> int:
+	var cost := 0
+	var size := _get_selected_size()
+	cost += PointCostConstants.PHYSICAL_SIZE_COSTS.get(size, 0)
+	var mts := _get_selected_movement_types()
+	cost += mts.size() * PointCostConstants.MOVEMENT_TYPE_COST
+	cost += int(_health_spin.value) * PointCostConstants.HEALTH_COST
+	cost += int(_attack_spin.value) * PointCostConstants.ATTACK_COST
+	cost += int(_defense_spin.value) * PointCostConstants.DEFENSE_COST
+	# Vision above base of 3
+	var extra_vision := max(0, int(_vision_spin.value) - 3)
+	cost += extra_vision * PointCostConstants.VISION_COST_PER_HEX
+	return cost
+
+
+func _update_points(_val: Variant = null) -> void:
+	var spent := _calculate_cost()
+	_points_remaining = PointCostConstants.TOTAL_STARTING_POINTS - spent
+	_points_label.text = str(_points_remaining)
+	if _points_remaining < 0:
+		_points_label.add_theme_color_override("font_color", Color.RED)
+	else:
+		_points_label.remove_theme_color_override("font_color")
+
+	var has_name := _name_input != null and _name_input.text.strip_edges().length() > 0
+	if _confirm_button:
+		_confirm_button.disabled = _points_remaining < 0 or not has_name
+
+
+func _on_confirm() -> void:
+	_creature_counter += 1
+	var creature_data := {
+		"id":              "creature_%d" % _creature_counter,
+		"name":            _name_input.text.strip_edges(),
+		"physical_size":   _get_selected_size(),
+		"movement_types":  _get_selected_movement_types(),
+		"movement_speed":  int(_speed_spin.value),
+		"vision":          int(_vision_spin.value),
+		"health":          int(_health_spin.value),
+		"attack":          int(_attack_spin.value),
+		"defense":         int(_defense_spin.value),
+	}
+	creature_confirmed.emit(creature_data)
+	# Reset name for next creature
+	_name_input.text = ""
+	_update_points("")
