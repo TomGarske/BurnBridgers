@@ -27,9 +27,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Godot
-        uses: firebelley/setup-godot@v1
+        uses: chickensoft-games/setup-godot@v2
         with:
-          godot-version: ${{ env.GODOT_VERSION }}
+          version: ${{ env.GODOT_VERSION }}
           include-templates: true
 
       - name: Export Windows build
