@@ -40,17 +40,22 @@ const TERRAIN_ATLAS_COORDS: Dictionary = {
 	"surface_water": Vector2i(4, 0),
 }
 const HIGHLIGHT_ATLAS_COORD := Vector2i(5, 0)
-const FOG_ATLAS_COORD       := Vector2i(6, 0)
+const FOG_UNSEEN_COORD      := Vector2i(6, 0)  # never-seen hex — fully opaque black
+const FOG_SEEN_COORD        := Vector2i(7, 0)  # previously seen hex — grey semi-transparent
+
+# How many extra rings beyond a creature's vision radius get the grey "seen" overlay
+const FOG_SEEN_RING_WIDTH := 3
 
 # Terrain colors for built-in atlas
 const _BUILTIN_COLORS: Array[Color] = [
-	Color("#0D1A66"),  # deep_ocean
-	Color("#2666CC"),  # shallow_ocean
-	Color("#999999"),  # mountain
-	Color("#4D9933"),  # land
-	Color("#4DB3E6"),  # surface_water
-	Color("#FFFF00"),  # highlight
-	Color(0.0, 0.0, 0.0, 0.7),  # fog
+	Color("#0D1A66"),              # 0  deep_ocean
+	Color("#2666CC"),              # 1  shallow_ocean
+	Color("#999999"),              # 2  mountain
+	Color("#4D9933"),              # 3  land
+	Color("#4DB3E6"),              # 4  surface_water
+	Color("#FFFF00"),              # 5  highlight (outline only)
+	Color(0.04, 0.04, 0.08, 1.0), # 6  fog unseen  — fully opaque dark
+	Color(0.35, 0.35, 0.38, 0.62),# 7  fog seen    — grey semi-transparent
 ]
 
 # ---------------------------------------------------------------------------
@@ -118,6 +123,8 @@ func _ready() -> void:
 	if _fog_layer:
 		_fog_layer.tile_set = _tile_set
 		_fill_fog()
+		# Start with a small revealed window around the spawn hex
+		reveal_hexes(SPAWN_HEX, 4)
 
 	# Center camera on the middle of the map
 	_camera.global_position = _terrain_layer.map_to_local(Vector2i(GRID_WIDTH / 2.0, GRID_HEIGHT / 2.0))
@@ -645,24 +652,37 @@ func _fill_fog() -> void:
 		return
 	for col in GRID_WIDTH:
 		for row in GRID_HEIGHT:
-			_fog_layer.set_cell(Vector2i(col, row), ATLAS_SOURCE_ID, FOG_ATLAS_COORD)
+			_fog_layer.set_cell(Vector2i(col, row), ATLAS_SOURCE_ID, FOG_UNSEEN_COORD)
 
 
+## Reveals hexes around `center` in three tiers:
+##   within radius       → fully visible (fog erased)
+##   radius+1 .. radius+FOG_SEEN_RING_WIDTH → grey "seen" overlay
+##   beyond that         → untouched (stays UNSEEN / fully dark)
+## Already-revealed cells are never re-fogged.
 func reveal_hexes(center: Vector2i, radius: int) -> void:
 	if not _fog_layer:
 		return
 	_fog_layer.erase_cell(center)
 	var visited: Dictionary = {center: true}
-	var frontier: Array[Vector2i] = [center]
-	for _r in radius:
-		var next_frontier: Array[Vector2i] = []
-		for cell: Vector2i in frontier:
-			for neighbor: Vector2i in _fog_layer.get_surrounding_cells(cell):
-				if not visited.has(neighbor):
-					visited[neighbor] = true
-					_fog_layer.erase_cell(neighbor)
-					next_frontier.append(neighbor)
-		frontier = next_frontier
+	var ring: Array[Vector2i] = [center]
+	var total_rings := radius + FOG_SEEN_RING_WIDTH
+	for r in total_rings:
+		var next_ring: Array[Vector2i] = []
+		for cell: Vector2i in ring:
+			for nb: Vector2i in _fog_layer.get_surrounding_cells(cell):
+				if visited.has(nb):
+					continue
+				visited[nb] = true
+				next_ring.append(nb)
+				if r < radius:
+					# Inner rings — fully visible
+					_fog_layer.erase_cell(nb)
+				else:
+					# Outer rings — grey "seen" overlay, but never re-fog a revealed cell
+					if _fog_layer.get_cell_source_id(nb) != -1:
+						_fog_layer.set_cell(nb, ATLAS_SOURCE_ID, FOG_SEEN_COORD)
+		ring = next_ring
 
 
 func refresh_creature_tokens() -> void:
