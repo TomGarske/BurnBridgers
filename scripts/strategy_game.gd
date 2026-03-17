@@ -1,7 +1,7 @@
 extends Node2D
 class_name StrategyGame
 
-const UiStyle := preload("res://scripts/ui/ui_style.gd")
+const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
 
 signal hex_clicked(coords: Vector2i)
 
@@ -675,7 +675,7 @@ func _wire_creature_panel() -> void:
 	# Apply sci-fi panel style to the side panel container
 	var side_panel := _creature_panel_layer.get_node_or_null("SidePanel") as PanelContainer
 	if side_panel:
-		UiStyle.style_panel(side_panel)
+		UiStyleScript.style_panel(side_panel)
 
 	var builder  := _creature_panel_layer.get_node_or_null(
 		"SidePanel/VBoxContainer/CreatureBuilder")
@@ -691,12 +691,12 @@ func _wire_creature_panel() -> void:
 		"SidePanel/VBoxContainer/AttributeCreator")
 
 	if end_turn:
-		UiStyle.style_button(end_turn)
+		UiStyleScript.style_button(end_turn)
 		end_turn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		end_turn.pressed.connect(CreatureMovement.advance_turn)
 
 	if attr_btn:
-		UiStyle.style_button(attr_btn)
+		UiStyleScript.style_button(attr_btn)
 		attr_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	if builder and bucket and stats:
