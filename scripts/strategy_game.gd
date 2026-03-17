@@ -81,8 +81,7 @@ var _terrain_layer: TileMapLayer
 var _highlight_layer: TileMapLayer
 var _selection_layer: TileMapLayer
 var _camera: Camera2D
-var _hover_label: Label
-var _hover_panel: Panel
+var _top_bar: Panel
 var _terrain_creator_layer: CanvasLayer
 var _fog_drawer: FogDrawer
 var _creature_token_layer: Node2D
@@ -101,8 +100,7 @@ func _ready() -> void:
 	_terrain_layer         = $TerrainLayer
 	_highlight_layer       = $HighlightLayer
 	_selection_layer       = $SelectionLayer
-	_hover_panel           = $UILayer/HoverPanel
-	_hover_label           = $UILayer/HoverPanel/HoverLabel
+	_top_bar               = $UILayer/TopBar if has_node("UILayer/TopBar") else null
 	_terrain_creator_layer = $TerrainCreatorLayer if has_node("TerrainCreatorLayer") else null
 	_fog_drawer           = $FogDrawer if has_node("FogDrawer") else null
 	_creature_token_layer = $CreatureTokenLayer if has_node("CreatureTokenLayer") else null
@@ -130,6 +128,14 @@ func _ready() -> void:
 
 	# Wire up creature panel
 	_wire_creature_panel()
+
+	# Style top controls bar
+	if _top_bar:
+		UiStyleScript.style_panel(_top_bar)
+		var lbl := _top_bar.get_node_or_null("TopBarLabel") as Label
+		if lbl:
+			lbl.add_theme_color_override("font_color", UiStyleScript.TEXT_SECONDARY)
+			lbl.add_theme_font_size_override("font_size", 12)
 
 	set_process_input(true)
 	set_process(true)
@@ -618,21 +624,6 @@ func _update_hover(cell: Vector2i) -> void:
 	if cell.x >= 0 and cell.x < GRID_WIDTH and cell.y >= 0 and cell.y < GRID_HEIGHT \
 			and hex_terrain_map.has(cell):
 		_highlight_layer.set_cell(cell, ATLAS_SOURCE_ID, HIGHLIGHT_ATLAS_COORD)
-		var terrain: String = hex_terrain_map[cell]
-		var latlon  := _hex_to_latlon(cell.x, cell.y)
-		var movement := TerrainDefinitions.get_required_movement_types(terrain)
-		_hover_label.text = (
-			"Grid: (%d, %d)\nLat/Lon: %.1f°, %.1f°\nTerrain: %s\nMovement: %s" % [
-				cell.x, cell.y,
-				latlon.y, latlon.x,
-				TerrainDefinitions.get_terrain_label(terrain),
-				", ".join(movement) if movement.size() > 0 else "none",
-			]
-		)
-		_hover_panel.visible = true
-	else:
-		_hover_label.text = ""
-		_hover_panel.visible = false
 
 	_hovered_cell = cell
 
@@ -706,7 +697,12 @@ func _wire_creature_panel() -> void:
 		bucket.creature_selected_in_bucket.connect(stats.show_creature_by_id)
 		stats.send_to_hex_world_pressed.connect(_on_send_to_hex)
 		stats.explore_pressed.connect(CreatureMovement.start_explore)
-		CreatureMovement.creature_selected.connect(stats.show_creature_by_id)
+		CreatureMovement.creature_selected.connect(
+			func(cid: String) -> void:
+				stats.show_creature_by_id(cid)
+				if tabs:
+					tabs.current_tab = 1
+		)
 
 	# Load persisted state and restore bucket tokens
 	GameState.load_game()
@@ -716,15 +712,9 @@ func _wire_creature_panel() -> void:
 
 
 func _on_send_to_hex(creature_id: String) -> void:
-	# Find creature data from bucket
 	for c: Dictionary in GameState.character_bucket:
 		if c.get("id", "") == creature_id:
 			CreatureMovement.place_creature_on_map(creature_id, c)
-			# Remove from bucket UI
-			var bucket := _creature_panel_layer.get_node_or_null(
-				"SidePanel/VBoxContainer/BottomTabs/CharacterBucket") as Node
-			if bucket and bucket.has_method("remove_creature"):
-				bucket.remove_creature(creature_id)
 			return
 
 # ---------------------------------------------------------------------------
@@ -735,11 +725,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	# T — open Terrain Creator, pin the hovered cell, and pass it to the creator
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_T and _terrain_creator_layer:
-			_terrain_creator_layer.visible = true
-			_set_pinned_cell(_hovered_cell)
-			var creator := _terrain_creator_layer.get_node_or_null("TerrainCreator")
-			if creator and creator.has_method("select_cell"):
-				creator.select_cell(_hovered_cell)
+			_terrain_creator_layer.visible = not _terrain_creator_layer.visible
+			if _terrain_creator_layer.visible:
+				_set_pinned_cell(_hovered_cell)
+				var creator := _terrain_creator_layer.get_node_or_null("TerrainCreator")
+				if creator and creator.has_method("select_cell"):
+					creator.select_cell(_hovered_cell)
+			else:
+				clear_pinned_cell()
 			get_viewport().set_input_as_handled()
 			return
 		# C — toggle creature panel
