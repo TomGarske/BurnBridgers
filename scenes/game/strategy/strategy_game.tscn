@@ -1,4 +1,4 @@
-[gd_scene load_steps=9 format=3 uid="uid://strategy_game_v1"]
+[gd_scene load_steps=8 format=3 uid="uid://strategy_game_v1"]
 
 [ext_resource type="Script" path="res://scripts/strategy_game.gd" id="1_sgame"]
 [ext_resource type="PackedScene" path="res://scenes/ui/terrain_creator.tscn" id="2_tcreat"]
@@ -7,7 +7,6 @@
 [ext_resource type="PackedScene" path="res://scenes/ui/creature_builder.tscn" id="4_cbuilder"]
 [ext_resource type="PackedScene" path="res://scenes/ui/character_bucket.tscn" id="5_cbucket"]
 [ext_resource type="PackedScene" path="res://scenes/ui/creature_stats_panel.tscn" id="6_cstats"]
-[ext_resource type="PackedScene" path="res://scenes/ui/attribute_creator.tscn" id="7_attrcreator"]
 
 [node name="StrategyGame" type="Node2D"]
 script = ExtResource("1_sgame")
@@ -80,27 +79,28 @@ layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
+theme_override_constants/separation = 4
 
 [node name="CreatureBuilder" parent="CreaturePanelLayer/SidePanel/VBoxContainer" instance=ExtResource("4_cbuilder")]
 layout_mode = 2
 
-[node name="CharacterBucket" parent="CreaturePanelLayer/SidePanel/VBoxContainer" instance=ExtResource("5_cbucket")]
+[node name="BottomTabs" type="TabContainer" parent="CreaturePanelLayer/SidePanel/VBoxContainer"]
 layout_mode = 2
 size_flags_vertical = 3
 
-[node name="CreatureStatsPanel" parent="CreaturePanelLayer/SidePanel/VBoxContainer" instance=ExtResource("6_cstats")]
+[node name="CharacterBucket" parent="CreaturePanelLayer/SidePanel/VBoxContainer/BottomTabs" instance=ExtResource("5_cbucket")]
 layout_mode = 2
+size_flags_vertical = 3
+
+[node name="CreatureStatsPanel" parent="CreaturePanelLayer/SidePanel/VBoxContainer/BottomTabs" instance=ExtResource("6_cstats")]
+layout_mode = 2
+size_flags_vertical = 3
 
 [node name="ButtonRow" type="HBoxContainer" parent="CreaturePanelLayer/SidePanel/VBoxContainer"]
 layout_mode = 2
+theme_override_constants/separation = 4
 
 [node name="EndTurn" type="Button" parent="CreaturePanelLayer/SidePanel/VBoxContainer/ButtonRow"]
 layout_mode = 2
+size_flags_horizontal = 3
 text = "End Turn"
-
-[node name="Attributes" type="Button" parent="CreaturePanelLayer/SidePanel/VBoxContainer/ButtonRow"]
-layout_mode = 2
-text = "Attributes"
-
-[node name="AttributeCreator" parent="CreaturePanelLayer/SidePanel/VBoxContainer" instance=ExtResource("7_attrcreator")]
-layout_mode = 2

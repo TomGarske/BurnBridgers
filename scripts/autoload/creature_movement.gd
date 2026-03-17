@@ -146,6 +146,7 @@ func place_creature_on_map(creature_id: String, creature_data: Dictionary) -> vo
 		"hex":  SPAWN_HEX,
 		"color": color,
 	}
+	GameState.save_game()
 
 	var vision: int = int(creature_data.get("vision", 3))
 	if _strategy_game:

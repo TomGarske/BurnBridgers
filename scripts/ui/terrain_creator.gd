@@ -150,36 +150,48 @@ func _rebuild_list() -> void:
 		var in_use := _is_terrain_in_use(id)
 		var captured_id := id
 
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 4)
+		var outer := VBoxContainer.new()
+		outer.add_theme_constant_override("separation", 2)
+
+		# Top row: colour swatch + terrain name
+		var name_row := HBoxContainer.new()
+		name_row.add_theme_constant_override("separation", 4)
 
 		var swatch := ColorRect.new()
-		swatch.custom_minimum_size = Vector2(18, 18)
+		swatch.custom_minimum_size = Vector2(16, 16)
 		swatch.color = TerrainDefinitions.get_terrain_color(id)
-		row.add_child(swatch)
+		name_row.add_child(swatch)
 
 		var lbl := Label.new()
 		lbl.text = TerrainDefinitions.get_terrain_label(id)
 		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		lbl.add_theme_color_override("font_color", UiStyleScript.TEXT_PRIMARY)
-		row.add_child(lbl)
+		name_row.add_child(lbl)
+		outer.add_child(name_row)
+
+		# Bottom row: Edit + Del buttons side-by-side, full width
+		var btn_row := HBoxContainer.new()
+		btn_row.add_theme_constant_override("separation", 4)
 
 		var edit_btn := Button.new()
 		edit_btn.text = "Edit"
+		edit_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		UiStyleScript.style_button(edit_btn)
 		edit_btn.pressed.connect(func() -> void: _on_edit_pressed(captured_id))
-		row.add_child(edit_btn)
+		btn_row.add_child(edit_btn)
 
 		var del_btn := Button.new()
 		del_btn.text = "Del"
+		del_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		del_btn.disabled = in_use
 		if in_use:
 			del_btn.tooltip_text = "In use on the map"
 		UiStyleScript.style_button(del_btn)
 		del_btn.pressed.connect(func() -> void: _on_delete_pressed(captured_id))
-		row.add_child(del_btn)
+		btn_row.add_child(del_btn)
+		outer.add_child(btn_row)
 
-		_terrain_vbox.add_child(row)
+		_terrain_vbox.add_child(outer)
 
 func _is_terrain_in_use(id: String) -> bool:
 	var strategy := _get_strategy_game()

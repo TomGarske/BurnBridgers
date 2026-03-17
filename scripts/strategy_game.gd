@@ -679,25 +679,24 @@ func _wire_creature_panel() -> void:
 
 	var builder  := _creature_panel_layer.get_node_or_null(
 		"SidePanel/VBoxContainer/CreatureBuilder")
+	var tabs     := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/BottomTabs") as TabContainer
 	var bucket   := _creature_panel_layer.get_node_or_null(
-		"SidePanel/VBoxContainer/CharacterBucket")
+		"SidePanel/VBoxContainer/BottomTabs/CharacterBucket")
 	var stats    := _creature_panel_layer.get_node_or_null(
-		"SidePanel/VBoxContainer/CreatureStatsPanel")
+		"SidePanel/VBoxContainer/BottomTabs/CreatureStatsPanel")
 	var end_turn := _creature_panel_layer.get_node_or_null(
 		"SidePanel/VBoxContainer/ButtonRow/EndTurn") as Button
-	var attr_btn := _creature_panel_layer.get_node_or_null(
-		"SidePanel/VBoxContainer/ButtonRow/Attributes") as Button
-	var attr_editor := _creature_panel_layer.get_node_or_null(
-		"SidePanel/VBoxContainer/AttributeCreator")
+
+	# Name the tabs
+	if tabs:
+		tabs.set_tab_title(0, "Built Creatures")
+		tabs.set_tab_title(1, "Selected Creature")
 
 	if end_turn:
 		UiStyleScript.style_button(end_turn)
 		end_turn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		end_turn.pressed.connect(CreatureMovement.advance_turn)
-
-	if attr_btn:
-		UiStyleScript.style_button(attr_btn)
-		attr_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	if builder and bucket and stats:
 		builder.creature_confirmed.connect(
@@ -709,8 +708,11 @@ func _wire_creature_panel() -> void:
 		stats.explore_pressed.connect(CreatureMovement.start_explore)
 		CreatureMovement.creature_selected.connect(stats.show_creature_by_id)
 
-	if attr_btn and attr_editor:
-		attr_btn.pressed.connect(func() -> void: attr_editor.visible = not attr_editor.visible)
+	# Load persisted state and restore bucket tokens
+	GameState.load_game()
+	if bucket:
+		for c: Dictionary in GameState.character_bucket:
+			bucket.restore_token(c)
 
 
 func _on_send_to_hex(creature_id: String) -> void:
@@ -720,7 +722,7 @@ func _on_send_to_hex(creature_id: String) -> void:
 			CreatureMovement.place_creature_on_map(creature_id, c)
 			# Remove from bucket UI
 			var bucket := _creature_panel_layer.get_node_or_null(
-				"SidePanel/VBoxContainer/CharacterBucket") as Node
+				"SidePanel/VBoxContainer/BottomTabs/CharacterBucket") as Node
 			if bucket and bucket.has_method("remove_creature"):
 				bucket.remove_creature(creature_id)
 			return
