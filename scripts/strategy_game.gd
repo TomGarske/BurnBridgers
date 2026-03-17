@@ -1,6 +1,8 @@
 extends Node2D
 class_name StrategyGame
 
+const UiStyle := preload("res://scripts/ui/ui_style.gd")
+
 signal hex_clicked(coords: Vector2i)
 
 ## Strategy Game — 180×90 flat-top hex world map.
@@ -669,6 +671,12 @@ func hex_to_world(cell: Vector2i) -> Vector2:
 func _wire_creature_panel() -> void:
 	if not _creature_panel_layer:
 		return
+
+	# Apply sci-fi panel style to the side panel container
+	var side_panel := _creature_panel_layer.get_node_or_null("SidePanel") as PanelContainer
+	if side_panel:
+		UiStyle.style_panel(side_panel)
+
 	var builder  := _creature_panel_layer.get_node_or_null(
 		"SidePanel/VBoxContainer/CreatureBuilder")
 	var bucket   := _creature_panel_layer.get_node_or_null(
@@ -676,11 +684,20 @@ func _wire_creature_panel() -> void:
 	var stats    := _creature_panel_layer.get_node_or_null(
 		"SidePanel/VBoxContainer/CreatureStatsPanel")
 	var end_turn := _creature_panel_layer.get_node_or_null(
-		"SidePanel/VBoxContainer/ButtonRow/EndTurn")
+		"SidePanel/VBoxContainer/ButtonRow/EndTurn") as Button
 	var attr_btn := _creature_panel_layer.get_node_or_null(
-		"SidePanel/VBoxContainer/ButtonRow/Attributes")
+		"SidePanel/VBoxContainer/ButtonRow/Attributes") as Button
 	var attr_editor := _creature_panel_layer.get_node_or_null(
 		"SidePanel/VBoxContainer/AttributeCreator")
+
+	if end_turn:
+		UiStyle.style_button(end_turn)
+		end_turn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		end_turn.pressed.connect(CreatureMovement.advance_turn)
+
+	if attr_btn:
+		UiStyle.style_button(attr_btn)
+		attr_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	if builder and bucket and stats:
 		builder.creature_confirmed.connect(
@@ -691,9 +708,6 @@ func _wire_creature_panel() -> void:
 		stats.send_to_hex_world_pressed.connect(_on_send_to_hex)
 		stats.explore_pressed.connect(CreatureMovement.start_explore)
 		CreatureMovement.creature_selected.connect(stats.show_creature_by_id)
-
-	if end_turn:
-		end_turn.pressed.connect(CreatureMovement.advance_turn)
 
 	if attr_btn and attr_editor:
 		attr_btn.pressed.connect(func() -> void: attr_editor.visible = not attr_editor.visible)
