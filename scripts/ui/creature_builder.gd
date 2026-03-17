@@ -140,8 +140,8 @@ func _get_selected_movement_types() -> Array[String]:
 
 func _calculate_cost() -> int:
 	var cost := 0
-	var size := _get_selected_size()
-	cost += PointCostConstants.PHYSICAL_SIZE_COSTS.get(size, 0)
+	var phys_size := _get_selected_size()
+	cost += PointCostConstants.PHYSICAL_SIZE_COSTS.get(phys_size, 0)
 	var mts := _get_selected_movement_types()
 	cost += mts.size() * PointCostConstants.MOVEMENT_TYPE_COST
 	cost += int(_health_spin.value) * PointCostConstants.HEALTH_COST
