@@ -18,7 +18,7 @@ offset_left = 10.0
 offset_top = 10.0
 offset_right = -10.0
 offset_bottom = -10.0
-split_offset = 185
+split_offset = 370
 
 [node name="TerrainListPanel" type="VBoxContainer" parent="HSplitContainer"]
 layout_mode = 2

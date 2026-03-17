@@ -34,24 +34,23 @@ script = ExtResource("8_fogdrawer")
 [node name="UILayer" type="CanvasLayer" parent="."]
 layer = 128
 
-[node name="HoverPanel" type="Panel" parent="UILayer"]
+[node name="TopBar" type="Panel" parent="UILayer"]
 layout_mode = 0
-offset_left = 340.0
-offset_top = 600.0
-offset_right = 660.0
-offset_bottom = 720.0
+offset_left = 0.0
+offset_top = 0.0
+offset_right = 1280.0
+offset_bottom = 36.0
 
-[node name="HoverLabel" type="Label" parent="UILayer/HoverPanel"]
+[node name="TopBarLabel" type="Label" parent="UILayer/TopBar"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
-offset_left = 4.0
+offset_left = 8.0
 offset_top = 4.0
-offset_right = -4.0
+offset_right = -8.0
 offset_bottom = -4.0
-autowrap_mode = 3
-text = ""
+text = "LMB: Select/Move Creature  |  MMB+Drag: Pan  |  Scroll: Zoom  |  T: Terrain Editor  |  C: Creature Panel  |  F: Toggle Fog  |  End Turn: Advance Round"
 
 [node name="TerrainCreatorLayer" type="CanvasLayer" parent="."]
 layer = 129
@@ -59,7 +58,7 @@ visible = false
 
 [node name="TerrainCreator" parent="TerrainCreatorLayer" instance=ExtResource("2_tcreat")]
 layout_mode = 0
-offset_left = 760.0
+offset_left = 570.0
 offset_top = 20.0
 offset_right = 1240.0
 offset_bottom = 560.0
