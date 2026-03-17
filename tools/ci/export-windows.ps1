@@ -10,26 +10,20 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Resolve-GodotCommand {
-    $candidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($env:GODOT4)) { $candidates += $env:GODOT4 }
-    if (-not [string]::IsNullOrWhiteSpace($env:GODOT)) { $candidates += $env:GODOT }
-    # Prefer godot4 over generic godot to avoid old shims.
-    $candidates += @("godot4", "godot")
-
-    foreach ($candidate in $candidates) {
-        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
-        # Use Get-Command first — it handles PATH lookup, PATHEXT extension resolution,
-        # and correctly resolves hard links / symlinks to their actual executable path.
-        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($null -ne $cmd) { return $cmd.Source }
-        # Fallback: try path directly and with .exe suffix for absolute paths
-        if ($candidate -match '[/\\]') {
-            if (Test-Path "$candidate.exe") { return "$candidate.exe" }
-            if (Test-Path $candidate) { return $candidate }
-        }
+    # Env vars are preferred only if they resolve to a real .exe.
+    foreach ($envPath in @($env:GODOT4, $env:GODOT)) {
+        if ([string]::IsNullOrWhiteSpace($envPath)) { continue }
+        if ($envPath -match '\.exe$' -and (Test-Path $envPath)) { return $envPath }
+        if (Test-Path "$envPath.exe") { return "$envPath.exe" }
     }
 
-    throw "Godot CLI not found. Checked env:GODOT4, env:GODOT, godot4, and godot."
+    # Fallback to command-name lookup. Returning the name (not Source path)
+    # lets PowerShell resolve PATH/PATHEXT and invoke hard links correctly.
+    foreach ($name in @("godot4", "godot")) {
+        if (Get-Command $name -ErrorAction SilentlyContinue) { return $name }
+    }
+
+    throw "Godot CLI not found. Set GODOT4/GODOT to an .exe path, or ensure godot/godot4 is in PATH."
 }
 
 $projectRootResolved = (Resolve-Path $ProjectRoot).Path
