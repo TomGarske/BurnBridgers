@@ -10,26 +10,24 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Resolve-GodotCommand {
-    $candidates = @()
-    if (-not [string]::IsNullOrWhiteSpace($env:GODOT4)) { $candidates += $env:GODOT4 }
-    if (-not [string]::IsNullOrWhiteSpace($env:GODOT)) { $candidates += $env:GODOT }
-    # Prefer godot4 over generic godot to avoid old shims.
-    $candidates += @("godot4", "godot")
-
-    foreach ($candidate in $candidates) {
-        if ([string]::IsNullOrWhiteSpace($candidate)) { continue }
-        # Use Get-Command first — it handles PATH lookup, PATHEXT extension resolution,
-        # and correctly resolves hard links / symlinks to their actual executable path.
-        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
-        if ($null -ne $cmd) { return $cmd.Source }
-        # Fallback: try path directly and with .exe suffix for absolute paths
-        if ($candidate -match '[/\\]') {
-            if (Test-Path "$candidate.exe") { return "$candidate.exe" }
-            if (Test-Path $candidate) { return $candidate }
-        }
+    # 1. Env vars: only trust them when they point to a real .exe file.
+    #    chickensoft-games/setup-godot creates a no-extension hard link and sets
+    #    GODOT/GODOT4 to that path. Calling an extension-less binary by full path
+    #    on Windows silently does nothing (LASTEXITCODE stays null). Instead we
+    #    fall through and use the command name from PATH below.
+    foreach ($envPath in @($env:GODOT4, $env:GODOT)) {
+        if ([string]::IsNullOrWhiteSpace($envPath)) { continue }
+        if ($envPath -match '\.exe$' -and (Test-Path $envPath)) { return $envPath }
+        if (Test-Path "$envPath.exe") { return "$envPath.exe" }
     }
 
-    throw "Godot CLI not found. Checked env:GODOT4, env:GODOT, godot4, and godot."
+    # 2. Command name lookup — return the NAME (not resolved source path) so
+    #    PowerShell invokes it via PATH, which handles hard links correctly.
+    foreach ($name in @("godot4", "godot")) {
+        if (Get-Command $name -ErrorAction SilentlyContinue) { return $name }
+    }
+
+    throw "Godot CLI not found. Set GODOT4/GODOT env var to a .exe path, or ensure godot/godot4 is in PATH."
 }
 
 $projectRootResolved = (Resolve-Path $ProjectRoot).Path
