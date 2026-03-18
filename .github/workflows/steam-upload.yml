@@ -13,7 +13,6 @@ jobs:
       contents: read
       actions: read
     env:
-      STEAM_BRANCH: "playtest"
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       STEAM_APP_ID: ${{ secrets.STEAM_APP_ID }}
       STEAM_DEPOT_ID_WINDOWS: ${{ secrets.STEAM_DEPOT_ID_WINDOWS }}
@@ -39,5 +38,4 @@ jobs:
         run: |
           ./tools/ci/upload-steam.ps1 `
             -ProjectRoot "$PWD" `
-            -BuildOutputDir "build/windows" `
-            -SteamBranch "${env:STEAM_BRANCH}"
+            -BuildOutputDir "build/windows"
