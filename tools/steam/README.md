@@ -18,7 +18,7 @@ Set these in **Repository Settings -> Secrets and variables -> Actions**:
 - `STEAM_DEPOT_ID_WINDOWS` (Windows depot ID in Steamworks)
 - `STEAM_BUILDER_USERNAME` (Steam build account username)
 - `STEAM_BUILDER_PASSWORD` (Steam build account password)
-- `STEAM_GUARD_CODE` (optional, only if your build account requires it)
+- `STEAM_TOTP_SECRET` (Steam shared secret used to generate TOTP login codes)
 
 ## Branch target
 
