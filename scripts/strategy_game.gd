@@ -1,4 +1,9 @@
 extends Node2D
+class_name StrategyGame
+
+const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
+
+signal hex_clicked(coords: Vector2i)
 
 ## Strategy Game — 180×90 flat-top hex world map.
 ##
@@ -28,6 +33,8 @@ const ZOOM_STEP := 0.1
 
 const TERRAIN_OVERRIDE_SAVE_PATH := "user://hex_terrain_overrides.json"
 
+const SPAWN_HEX := Vector2i(90, 45)
+
 const TERRAIN_ATLAS_COORDS: Dictionary = {
 	"deep_ocean":    Vector2i(0, 0),
 	"shallow_ocean": Vector2i(1, 0),
@@ -39,12 +46,12 @@ const HIGHLIGHT_ATLAS_COORD := Vector2i(5, 0)
 
 # Terrain colors for built-in atlas
 const _BUILTIN_COLORS: Array[Color] = [
-	Color("#0D1A66"),  # deep_ocean
-	Color("#2666CC"),  # shallow_ocean
-	Color("#999999"),  # mountain
-	Color("#4D9933"),  # land
-	Color("#4DB3E6"),  # surface_water
-	Color("#FFFF00"),  # highlight
+	Color("#0D1A66"),  # 0  deep_ocean
+	Color("#2666CC"),  # 1  shallow_ocean
+	Color("#999999"),  # 2  mountain
+	Color("#4D9933"),  # 3  land
+	Color("#4DB3E6"),  # 4  surface_water
+	Color("#FFFF00"),  # 5  highlight (outline only)
 ]
 
 # ---------------------------------------------------------------------------
@@ -74,9 +81,11 @@ var _terrain_layer: TileMapLayer
 var _highlight_layer: TileMapLayer
 var _selection_layer: TileMapLayer
 var _camera: Camera2D
-var _hover_label: Label
-var _hover_panel: Panel
+var _top_bar: Panel
 var _terrain_creator_layer: CanvasLayer
+var _fog_drawer: FogDrawer
+var _creature_token_layer: Node2D
+var _creature_panel_layer: CanvasLayer
 
 # Pinned selection (set when T is pressed)
 var _pinned_cell: Vector2i = Vector2i(-1, -1)
@@ -91,9 +100,11 @@ func _ready() -> void:
 	_terrain_layer         = $TerrainLayer
 	_highlight_layer       = $HighlightLayer
 	_selection_layer       = $SelectionLayer
-	_hover_panel           = $UILayer/HoverPanel
-	_hover_label           = $UILayer/HoverPanel/HoverLabel
+	_top_bar               = $UILayer/TopBar if has_node("UILayer/TopBar") else null
 	_terrain_creator_layer = $TerrainCreatorLayer if has_node("TerrainCreatorLayer") else null
+	_fog_drawer           = $FogDrawer if has_node("FogDrawer") else null
+	_creature_token_layer = $CreatureTokenLayer if has_node("CreatureTokenLayer") else null
+	_creature_panel_layer  = $CreaturePanelLayer if has_node("CreaturePanelLayer") else null
 
 	_setup_noise()
 	_create_and_assign_tile_set()
@@ -103,11 +114,32 @@ func _ready() -> void:
 	_load_terrain_overrides()
 	_update_chunks()
 
+	# Start with a small revealed window around the spawn hex
+	reveal_hexes(SPAWN_HEX, 4)
+
 	# Center camera on the middle of the map
 	_camera.global_position = _terrain_layer.map_to_local(Vector2i(GRID_WIDTH / 2.0, GRID_HEIGHT / 2.0))
 
 	# Listen for terrain registry changes (custom terrain add/remove/edit)
 	TerrainDefinitions.terrain_updated.connect(_on_terrain_definitions_changed)
+
+	# Wire up creature movement singleton
+	CreatureMovement.set_strategy_game(self)
+
+	# Wire up creature panel
+	_wire_creature_panel()
+
+	# Style top controls bar
+	if _top_bar:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.04, 0.06, 0.12, 0.9)
+		sb.border_width_bottom = 1
+		sb.border_color = UiStyleScript.BORDER_SOFT
+		_top_bar.add_theme_stylebox_override("panel", sb)
+		var lbl := _top_bar.get_node_or_null("TopBarLabel") as Label
+		if lbl:
+			lbl.add_theme_color_override("font_color", UiStyleScript.TEXT_SECONDARY)
+			lbl.add_theme_font_size_override("font_size", 12)
 
 	set_process_input(true)
 	set_process(true)
@@ -151,6 +183,7 @@ func _generate_atlas_texture() -> ImageTexture:
 		if col == 5:  # highlight tile — outline only so terrain color shows through
 			_draw_hex_outline_on_image(img, col * 64, _BUILTIN_COLORS[col], 3)
 		else:
+			# col 6 = fog tile — solid fill with alpha
 			_draw_hex_on_image(img, col * 64, _BUILTIN_COLORS[col])
 	return ImageTexture.create_from_image(img)
 
@@ -595,23 +628,98 @@ func _update_hover(cell: Vector2i) -> void:
 	if cell.x >= 0 and cell.x < GRID_WIDTH and cell.y >= 0 and cell.y < GRID_HEIGHT \
 			and hex_terrain_map.has(cell):
 		_highlight_layer.set_cell(cell, ATLAS_SOURCE_ID, HIGHLIGHT_ATLAS_COORD)
-		var terrain: String = hex_terrain_map[cell]
-		var latlon  := _hex_to_latlon(cell.x, cell.y)
-		var movement := TerrainDefinitions.get_required_movement_types(terrain)
-		_hover_label.text = (
-			"Grid: (%d, %d)\nLat/Lon: %.1f°, %.1f°\nTerrain: %s\nMovement: %s" % [
-				cell.x, cell.y,
-				latlon.y, latlon.x,
-				TerrainDefinitions.get_terrain_label(terrain),
-				", ".join(movement) if movement.size() > 0 else "none",
-			]
-		)
-		_hover_panel.visible = true
-	else:
-		_hover_label.text = ""
-		_hover_panel.visible = false
 
 	_hovered_cell = cell
+
+# ---------------------------------------------------------------------------
+# Fog of war — delegates to FogDrawer Node2D
+# ---------------------------------------------------------------------------
+
+func reveal_hexes(center: Vector2i, radius: int) -> void:
+	if _fog_drawer:
+		_fog_drawer.reveal_hexes(center, radius)
+
+
+func is_hex_seen(cell: Vector2i) -> bool:
+	return _fog_drawer.is_hex_seen(cell) if _fog_drawer else false
+
+
+func refresh_creature_tokens() -> void:
+	if _creature_token_layer:
+		_creature_token_layer.queue_redraw()
+
+# ---------------------------------------------------------------------------
+# Hex spatial helpers
+# ---------------------------------------------------------------------------
+
+func get_hex_neighbors(cell: Vector2i) -> Array[Vector2i]:
+	return _terrain_layer.get_surrounding_cells(cell)
+
+
+func hex_to_world(cell: Vector2i) -> Vector2:
+	return _terrain_layer.map_to_local(cell)
+
+# ---------------------------------------------------------------------------
+# Creature panel wiring
+# ---------------------------------------------------------------------------
+
+func _wire_creature_panel() -> void:
+	if not _creature_panel_layer:
+		return
+
+	# Apply sci-fi panel style to the side panel container
+	var side_panel := _creature_panel_layer.get_node_or_null("SidePanel") as PanelContainer
+	if side_panel:
+		UiStyleScript.style_panel(side_panel)
+
+	var builder  := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/CreatureBuilder")
+	var tabs     := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/BottomTabs") as TabContainer
+	var bucket   := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/BottomTabs/CharacterBucket")
+	var stats    := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/BottomTabs/CreatureStatsPanel")
+	var end_turn := _creature_panel_layer.get_node_or_null(
+		"SidePanel/VBoxContainer/ButtonRow/EndTurn") as Button
+
+	# Name the tabs
+	if tabs:
+		tabs.set_tab_title(0, "Built Creatures")
+		tabs.set_tab_title(1, "Selected Creature")
+
+	if end_turn:
+		UiStyleScript.style_button(end_turn)
+		end_turn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		end_turn.pressed.connect(CreatureMovement.advance_turn)
+
+	if builder and bucket and stats:
+		builder.creature_confirmed.connect(
+			func(creature_data: Dictionary) -> void:
+				bucket.add_creature(creature_data)
+		)
+		bucket.creature_selected_in_bucket.connect(stats.show_creature_by_id)
+		stats.send_to_hex_world_pressed.connect(_on_send_to_hex)
+		stats.explore_pressed.connect(CreatureMovement.start_explore)
+		CreatureMovement.creature_selected.connect(
+			func(cid: String) -> void:
+				stats.show_creature_by_id(cid)
+				if tabs:
+					tabs.current_tab = 1
+		)
+
+	# Load persisted state and restore bucket tokens
+	GameState.load_game()
+	if bucket:
+		for c: Dictionary in GameState.character_bucket:
+			bucket.restore_token(c)
+
+
+func _on_send_to_hex(creature_id: String) -> void:
+	for c: Dictionary in GameState.character_bucket:
+		if c.get("id", "") == creature_id:
+			CreatureMovement.place_creature_on_map(creature_id, c)
+			return
 
 # ---------------------------------------------------------------------------
 # Input — camera and hex click
@@ -621,11 +729,24 @@ func _unhandled_input(event: InputEvent) -> void:
 	# T — open Terrain Creator, pin the hovered cell, and pass it to the creator
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_T and _terrain_creator_layer:
-			_terrain_creator_layer.visible = true
-			_set_pinned_cell(_hovered_cell)
-			var creator := _terrain_creator_layer.get_node_or_null("TerrainCreator")
-			if creator and creator.has_method("select_cell"):
-				creator.select_cell(_hovered_cell)
+			_terrain_creator_layer.visible = not _terrain_creator_layer.visible
+			if _terrain_creator_layer.visible:
+				_set_pinned_cell(_hovered_cell)
+				var creator := _terrain_creator_layer.get_node_or_null("TerrainCreator")
+				if creator and creator.has_method("select_cell"):
+					creator.select_cell(_hovered_cell)
+			else:
+				clear_pinned_cell()
+			get_viewport().set_input_as_handled()
+			return
+		# C — toggle creature panel
+		if event.keycode == KEY_C and _creature_panel_layer:
+			_creature_panel_layer.visible = not _creature_panel_layer.visible
+			get_viewport().set_input_as_handled()
+			return
+		# F — toggle fog of war
+		if event.keycode == KEY_F and _fog_drawer:
+			_fog_drawer.visible = not _fog_drawer.visible
 			get_viewport().set_input_as_handled()
 			return
 
@@ -640,6 +761,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			_zoom_camera(-ZOOM_STEP)
 			get_viewport().set_input_as_handled()
 			return
+
+		# Left click — select hex / queue creature movement
+		if ev_mb.button_index == MOUSE_BUTTON_LEFT and ev_mb.pressed:
+			var mouse_world := get_global_mouse_position()
+			var local_pos   := _terrain_layer.to_local(mouse_world)
+			var cell        := _terrain_layer.local_to_map(local_pos)
+			if cell.x >= 0 and cell.x < GRID_WIDTH and cell.y >= 0 and cell.y < GRID_HEIGHT:
+				hex_clicked.emit(cell)
+				CreatureMovement.on_hex_clicked(cell)
 
 		# Middle mouse: start/stop pan drag
 		if ev_mb.button_index == MOUSE_BUTTON_MIDDLE:

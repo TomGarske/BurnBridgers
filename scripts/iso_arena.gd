@@ -588,9 +588,9 @@ func _draw_tiles(vp: Vector2) -> void:
 func _draw_player(p: Dictionary) -> void:
 	var sp  := _w2s(p.wx, p.wy)
 	var pa: Color = p.palette[0]
-	var pb: Color = p.palette[1]
-	var hull_dark := Color(pa.r * 0.40, pa.g * 0.40, pa.b * 0.40)
-	var wood      := Color(0.38, 0.24, 0.10)
+	var _pb: Color = p.palette[1]
+	var _hull_dark := Color(pa.r * 0.40, pa.g * 0.40, pa.b * 0.40)
+	var _wood      := Color(0.38, 0.24, 0.10)
 
 	# Wake ripple shadow
 	draw_set_transform(sp + Vector2(0.0, 5.0), 0.0, Vector2(1.0, 0.30))
@@ -633,7 +633,7 @@ func _draw_player(p: Dictionary) -> void:
 
 	if p.atk_time > 0.0:
 		var ds   := _dir_screen(p.dir.x, p.dir.y)
-		var perp := Vector2(-ds.y, ds.x)
+		var _perp := Vector2(-ds.y, ds.x)
 
 	# Name tag
 	var font := ThemeDB.fallback_font
