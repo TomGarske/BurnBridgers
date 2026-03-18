@@ -2,9 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ProjectRoot,
     [Parameter(Mandatory = $false)]
-    [string]$BuildOutputDir = "build/windows",
-    [Parameter(Mandatory = $false)]
-    [string]$SteamBranch = "playtest"
+    [string]$BuildOutputDir = "build/windows"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,17 +16,31 @@ function Require-Env {
     return $value
 }
 
+function Require-NumericId {
+    param(
+        [string]$Name,
+        [string]$Value
+    )
+    if ($Value -notmatch '^\d+$') {
+        throw "$Name must be numeric digits only. Current value: '$Value'"
+    }
+    return $Value
+}
+
 $projectRootResolved = (Resolve-Path $ProjectRoot).Path
 $contentRoot = Join-Path $projectRootResolved $BuildOutputDir
 if (-not (Test-Path $contentRoot)) {
     throw "Build output directory not found: '$contentRoot'"
 }
 
-$steamAppId = Require-Env "STEAM_APP_ID"
-$steamDepotIdWindows = Require-Env "STEAM_DEPOT_ID_WINDOWS"
-$steamUser = Require-Env "STEAM_USERNAME"
+$steamAppId = (Require-Env "STEAM_APP_ID").Trim()
+$steamDepotIdWindows = (Require-Env "STEAM_DEPOT_ID_WINDOWS").Trim()
+$steamUser = (Require-Env "STEAM_USERNAME").Trim()
 $steamPassword = Require-Env "STEAM_PASSWORD"
 $steamTotpSecret = Require-Env "STEAM_TOTP_SECRET"
+
+$steamAppId = Require-NumericId -Name "STEAM_APP_ID" -Value $steamAppId
+$steamDepotIdWindows = Require-NumericId -Name "STEAM_DEPOT_ID_WINDOWS" -Value $steamDepotIdWindows
 
 $steamDir = Join-Path $env:RUNNER_TEMP "steamcmd"
 New-Item -ItemType Directory -Path $steamDir -Force | Out-Null
@@ -96,7 +108,6 @@ $description = "GitHub Actions build $($env:GITHUB_RUN_NUMBER) - $($env:GITHUB_S
 $appBuildText = Get-Content $templateAppBuild -Raw
 $appBuildText = $appBuildText.Replace("__APP_ID__", $steamAppId)
 $appBuildText = $appBuildText.Replace("__DESC__", $description)
-$appBuildText = $appBuildText.Replace("__SETLIVE__", $SteamBranch)
 $appBuildText = $appBuildText.Replace("__CONTENT_ROOT__", $contentRoot)
 $appBuildText = $appBuildText.Replace("__DEPOT_ID_WINDOWS__", $steamDepotIdWindows)
 Set-Content -Path $generatedAppBuild -Value $appBuildText -NoNewline
@@ -105,10 +116,19 @@ $depotBuildText = Get-Content $templateDepotBuild -Raw
 $depotBuildText = $depotBuildText.Replace("__DEPOT_ID_WINDOWS__", $steamDepotIdWindows)
 Set-Content -Path $generatedDepotBuild -Value $depotBuildText -NoNewline
 
-Write-Host "Uploading build to Steam app $steamAppId (branch: $SteamBranch)..."
+Write-Host "Uploading build to Steam app $steamAppId..."
 & $steamExe +set_steam_guard_code $totpCode +login $steamUser $steamPassword +run_app_build $generatedAppBuild +quit
 
 if ($LASTEXITCODE -ne 0) {
+    Write-Host "Generated app build config:"
+    Get-Content $generatedAppBuild
+    Write-Host "Generated depot build config:"
+    Get-Content $generatedDepotBuild
+    $stderrPath = Join-Path $steamDir "logs/stderr.txt"
+    if (Test-Path $stderrPath) {
+        Write-Host "SteamCMD stderr ($stderrPath):"
+        Get-Content $stderrPath
+    }
     throw "SteamCMD upload failed with exit code $LASTEXITCODE"
 }
 
