@@ -28,8 +28,7 @@ $steamAppId = Require-Env "STEAM_APP_ID"
 $steamDepotIdWindows = Require-Env "STEAM_DEPOT_ID_WINDOWS"
 $steamUser = Require-Env "STEAM_USERNAME"
 $steamPassword = Require-Env "STEAM_PASSWORD"
-$steamTotpSecret = [Environment]::GetEnvironmentVariable("STEAM_TOTP_SECRET")
-$steamGuardCode = [Environment]::GetEnvironmentVariable("STEAM_GUARD_CODE")
+$steamTotpSecret = Require-Env "STEAM_TOTP_SECRET"
 
 $steamDir = Join-Path $env:RUNNER_TEMP "steamcmd"
 New-Item -ItemType Directory -Path $steamDir -Force | Out-Null
@@ -42,9 +41,9 @@ if (-not (Test-Path $steamExe)) {
     Expand-Archive -Path $steamZip -DestinationPath $steamDir -Force
 }
 
-# Generate a Steam Guard TOTP code from the shared secret.
+# Generate a Steam TOTP code from the shared secret.
 # Steam uses a non-standard TOTP: HMAC-SHA1, 30s period, custom charset, 5-char codes.
-function Get-SteamGuardCode {
+function Get-SteamTotpCode {
     param([string]$SharedSecret)
 
     $secretBytes = [Convert]::FromBase64String($SharedSecret)
@@ -66,31 +65,23 @@ function Get-SteamGuardCode {
              ($hash[$offset + 3] -band 0xFF)
 
     $chars = "23456789BCDFGHJKMNPQRTVWXY"
-    $guardCode = ""
+    $totpCode = ""
     for ($i = 0; $i -lt 5; $i++) {
-        $guardCode += $chars[$code % $chars.Length]
+        $totpCode += $chars[$code % $chars.Length]
         $code = [Math]::Floor($code / $chars.Length)
     }
 
-    return $guardCode
+    return $totpCode
 }
 
 # Run SteamCMD once to let it self-update.
 Write-Host "Running SteamCMD self-update..."
 & $steamExe +quit
 
-# Resolve Steam Guard code: prefer manual code (workflow_dispatch), then TOTP secret
-if (-not [string]::IsNullOrWhiteSpace($steamGuardCode)) {
-    $guardCode = $steamGuardCode
-    Write-Host "Using manually provided Steam Guard code."
-} elseif (-not [string]::IsNullOrWhiteSpace($steamTotpSecret)) {
-    $guardCode = Get-SteamGuardCode -SharedSecret $steamTotpSecret
-    Write-Host "Generated Steam Guard code from TOTP secret."
-} else {
-    throw "No Steam Guard code available. Provide a code via workflow_dispatch or set STEAM_TOTP_SECRET."
-}
+$totpCode = Get-SteamTotpCode -SharedSecret $steamTotpSecret
+Write-Host "Generated Steam TOTP code from shared secret."
 
-$templateAppBuild
+$templateAppBuild = Join-Path $projectRootResolved "tools/steam/app_build_template.vdf"
 $templateDepotBuild = Join-Path $projectRootResolved "tools/steam/depot_build_windows_template.vdf"
 if (-not (Test-Path $templateAppBuild)) { throw "Missing $templateAppBuild" }
 if (-not (Test-Path $templateDepotBuild)) { throw "Missing $templateDepotBuild" }
@@ -115,7 +106,7 @@ $depotBuildText = $depotBuildText.Replace("__DEPOT_ID_WINDOWS__", $steamDepotIdW
 Set-Content -Path $generatedDepotBuild -Value $depotBuildText -NoNewline
 
 Write-Host "Uploading build to Steam app $steamAppId (branch: $SteamBranch)..."
-& $steamExe +set_steam_guard_code $guardCode +login $steamUser $steamPassword +run_app_build $generatedAppBuild +quit
+& $steamExe +set_steam_guard_code $totpCode +login $steamUser $steamPassword +run_app_build $generatedAppBuild +quit
 
 if ($LASTEXITCODE -ne 0) {
     throw "SteamCMD upload failed with exit code $LASTEXITCODE"
