@@ -39,12 +39,15 @@ var match_phase: MatchPhase = MatchPhase.LOBBY
 var _next_team_id: int = 0
 var music_enabled: bool = true
 var selected_game_mode_id: String = DEFAULT_GAME_MODE_ID
+var music_volume: float = 0.38
+var sfx_volume: float = 0.45
 var music_intensity: float = float(DEFAULT_MUSIC_PROFILE["intensity"])
 var music_speed: float = float(DEFAULT_MUSIC_PROFILE["speed"])
 var music_tone: float = float(DEFAULT_MUSIC_PROFILE["tone"])
 
 signal music_enabled_changed(enabled: bool)
 signal selected_game_mode_changed(mode_id: String)
+signal audio_volume_changed(music_volume: float, sfx_volume: float)
 signal music_profile_changed(intensity: float, speed: float, tone: float)
 
 # ---------------------------------------------------------------------------
@@ -59,6 +62,26 @@ func set_music_enabled(enabled: bool) -> void:
 		return
 	music_enabled = enabled
 	music_enabled_changed.emit(music_enabled)
+
+func set_audio_volumes(next_music_volume: float, next_sfx_volume: float) -> void:
+	var clamped_music: float = clampf(next_music_volume, 0.0, 1.0)
+	var clamped_sfx: float = clampf(next_sfx_volume, 0.0, 1.0)
+	if is_equal_approx(clamped_music, music_volume) and is_equal_approx(clamped_sfx, sfx_volume):
+		return
+	music_volume = clamped_music
+	sfx_volume = clamped_sfx
+	audio_volume_changed.emit(music_volume, sfx_volume)
+
+func set_music_profile(intensity: float, speed: float, _tone: float) -> void:
+	var next_intensity: float = clampf(intensity, 0.2, 2.0)
+	var next_speed: float = clampf(speed, 0.3, 1.3)
+	var next_tone: float = 1.0
+	if is_equal_approx(next_intensity, music_intensity) and is_equal_approx(next_speed, music_speed) and is_equal_approx(next_tone, music_tone):
+		return
+	music_intensity = next_intensity
+	music_speed = next_speed
+	music_tone = next_tone
+	music_profile_changed.emit(music_intensity, music_speed, music_tone)
 
 func get_game_modes() -> Array[Dictionary]:
 	return GAME_MODES.duplicate(true)
@@ -104,8 +127,8 @@ func _apply_music_profile_for_mode(mode_id: String, should_emit: bool = true) ->
 	if MODE_MUSIC_PROFILES.has(mode_id):
 		profile = MODE_MUSIC_PROFILES[mode_id]
 	music_intensity = clampf(float(profile.get("intensity", 1.0)), 0.2, 2.0)
-	music_speed = clampf(float(profile.get("speed", 1.0)), 0.5, 1.8)
-	music_tone = clampf(float(profile.get("tone", 1.0)), 0.7, 1.4)
+	music_speed = clampf(float(profile.get("speed", 1.0)), 0.3, 1.3)
+	music_tone = 1.0
 	if should_emit:
 		music_profile_changed.emit(music_intensity, music_speed, music_tone)
 
