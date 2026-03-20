@@ -90,21 +90,21 @@ function Get-KenneyDownloadUrl {
         throw "Failed to fetch $pageUrl : $_"
     }
 
-    # Kenney download links look like:
-    #   href="/media/pages/assets/<slug>/<hash>/<slug>.zip"
-    $pattern = 'href="(/media/pages/assets/' + [regex]::Escape($Slug) + '/[^"]+\.zip)"'
+    # Kenney download links look like (single-quoted, absolute URL):
+    #   href='https://kenney.nl/media/pages/assets/<slug>/<hash>/kenney_<slug>.zip'
+    $pattern = "href='(https://kenney\.nl/media/pages/assets/" + [regex]::Escape($Slug) + "/[^']+\.zip)'"
     $match = [regex]::Match($response.Content, $pattern)
 
     if (-not $match.Success) {
-        # Fallback: look for any zip link containing the slug
-        $fallback = [regex]::Match($response.Content, 'href="([^"]*' + [regex]::Escape($Slug) + '[^"]*\.zip)"')
+        # Fallback: any single-quoted zip link containing the slug
+        $fallback = [regex]::Match($response.Content, "href='([^']*" + [regex]::Escape($Slug) + "[^']*\.zip)'")
         if ($fallback.Success) {
-            return "https://kenney.nl" + $fallback.Groups[1].Value
+            return $fallback.Groups[1].Value
         }
         throw "Could not find download link on $pageUrl - the page structure may have changed."
     }
 
-    return "https://kenney.nl" + $match.Groups[1].Value
+    return $match.Groups[1].Value
 }
 
 # ---------------------------------------------------------------------------
