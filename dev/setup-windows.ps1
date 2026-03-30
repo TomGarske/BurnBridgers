@@ -18,7 +18,7 @@ $GodotSteamGdeTag  = "v4.17.1-gde"
 $GodotSteamArchive = "godotsteam-4.17-gdextension-plugin-4.4.tar.xz"
 $GodotSteamBaseUrl = "https://codeberg.org/godotsteam/godotsteam/releases/download"
 
-# Steam app ID — Fireteam MNG Playtest (App ID 4530870)
+# Steam app ID — Ironwake Playtest (App ID 4530870)
 $SteamAppId = "4530870"
 
 # ── Godot extension registry ──────────────────────────────────────────

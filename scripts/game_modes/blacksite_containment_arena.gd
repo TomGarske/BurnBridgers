@@ -49,6 +49,19 @@ var _bot_agents: Array = []        # Array[BotShipAgent]
 var _bot_indices: Array[int] = []  # indices into _players
 var _is_local_sim: bool = false
 
+## Fade timers: each HUD element fades out after its trigger condition stops.
+## Value = seconds remaining of full opacity; element fades over last 1.5s.
+const _HUD_FADE_DURATION: float = 1.5
+var _fade_path_line: float = 0.0
+var _fade_accuracy_ring: float = 0.0
+var _fade_ballistics_arc: float = 0.0
+var _fade_elev_hud: float = 0.0
+## Track previous-frame state to detect changes.
+var _prev_rudder_angle: float = 0.0
+var _prev_sail_state: int = -1
+var _prev_wheel_velocity: float = 0.0
+var _prev_elev_adjusting: bool = false
+
 @export_group("Local sim (req-local-sim-v1)")
 @export var local_sim_enabled: bool = true
 @export_range(1, 4, 1) var local_sim_bot_count: int = 3
@@ -65,7 +78,6 @@ const SAIL_LOWER_ACTION: String = "bf_sail_lower"
 const BROADSIDE_PORT_ACTION: String = "bf_broadside_port"
 const BROADSIDE_STBD_ACTION: String = "bf_broadside_stbd"
 const FIRE_MODE_ACTION: String = "bf_fire_mode"
-const AUTOFIRE_ACTION: String = "bf_autofire"
 const WHEEL_LOCK_ACTION: String = "bf_wheel_lock"
 const ELEV_UP_ACTION: String = "bf_elev_up"
 const ELEV_DOWN_ACTION: String = "bf_elev_down"
@@ -73,7 +85,6 @@ const ELEV_DOWN_ACTION: String = "bf_elev_down"
 const _BATTERY_AIM_ALIGN_DOT: float = 0.35
 
 ## Forward motion — heavy hull: low drag so speed carries (momentum).
-const MOTION_DECEL_ABOVE_TARGET: float = 0.95
 const MOTION_PASSIVE_DRAG_K: float = 0.025
 const COAST_DRAG_MULT: float = 2.0
 const MOTION_ZERO_SAIL_DRAG: float = 0.04
@@ -81,17 +92,18 @@ const MOTION_ZERO_SAIL_DRAG: float = 0.04
 const MOTION_TURNING_SPEED_LOSS: float = 0.03
 const MOTION_HARD_TURN_SPEED_LOSS: float = 0.05
 const MOTION_HARD_TURN_RUDDER: float = 0.9
-const PROJECTILE_DAMAGE: float = 25.0
-## Hull integrity: each cannon shell that strikes the hull removes 1 hit.
-const HULL_HITS_MAX: float = 6.0
+## Each cannonball impact removes this many hull points (structural hit model).
+const HULL_DAMAGE_PER_HIT: float = 1.0
+## Hull integrity: total structural hits before sinking.
+const HULL_HITS_MAX: float = 16.0
 const _STICK_DEADZONE: float = 0.2
 const _SPLASH_DURATION: float = 0.42
 const _HULL_STRIKE_DURATION: float = 0.4
 const _PROJECTILE_HIT_ARM_TIME: float = 0.12
 const _MUZZLE_FLASH_DURATION: float = 0.15
 const _MUZZLE_SMOKE_DURATION: float = 2.0
-const _METERS_PER_WORLD_UNIT: float = 1.0
-const _KNOTS_PER_METER_PER_SEC: float = 1.94384
+## Display scale: maps game speed to realistic age-of-sail knots (~11 kn at full speed).
+const _KNOTS_PER_GAME_UNIT: float = 0.51
 const _ZOOM_STEP_FINE: float = 0.02
 const RESPAWN_DELAY_SEC: float = 5.0
 
@@ -207,10 +219,10 @@ func _apply_naval_controllers_to_ship(p: Dictionary) -> void:
 	sail.current_sail_level = 0.25
 	p["sail"] = sail
 	var helm := _HelmController.new()
-	helm.wheel_spin_accel = 3.0
-	helm.wheel_max_spin = 1.08
-	helm.wheel_friction = 5.1
-	helm.rudder_follow_rate = 0.78
+	helm.wheel_spin_accel = 0.8
+	helm.wheel_max_spin = 0.38
+	helm.wheel_friction = 2.5
+	helm.rudder_follow_rate = 0.42
 	p["helm"] = helm
 	p["move_speed"] = NC.QUARTER_SPEED
 	p["angular_velocity"] = 0.0
@@ -310,6 +322,16 @@ func _init_bot_controllers(p: Dictionary) -> void:
 	p["health"] = HULL_HITS_MAX
 	p.erase("respawn_timer")
 	_apply_naval_controllers_to_ship(p)
+	_apply_bot_helm_overrides(p)
+
+
+func _apply_bot_helm_overrides(p: Dictionary) -> void:
+	var helm: Variant = p.get("helm")
+	if helm != null:
+		helm.wheel_spin_accel = 4.0
+		helm.wheel_max_spin = 1.2
+		helm.wheel_friction = 6.0
+		helm.rudder_follow_rate = 1.4
 
 
 ## Find the bot controller for a given _players index.
@@ -361,9 +383,7 @@ func _tick_bot(p: Dictionary, player_idx: int, delta: float) -> void:
 	var spd_for_turn: float = float(p.get("move_speed", 0.0))
 	var turn_deg: float = NC.turn_rate_deg_for_speed(spd_for_turn)
 	var max_turn_rad: float = deg_to_rad(turn_deg)
-	# Bots often start at 0 speed while the BT tries to align; player steer_auth would stay ~0 and
-	# they never yaw. Floor keeps rudder effective until move_speed builds.
-	var steer_auth: float = maxf(0.78, clampf(spd_for_turn / 8.25, 0.0, 1.0))
+	var steer_auth: float = maxf(NC.RUDDER_AUTHORITY_MIN, clampf(spd_for_turn / NC.RUDDER_AUTHORITY_SPEED, 0.0, 1.0))
 	var target_av: float = max_turn_rad * helm.rudder_angle * steer_auth
 	var tau: float = NC.HELM_TURN_LAG_SEC
 	ang_vel = lerpf(ang_vel, target_av, 1.0 - exp(-delta / tau))
@@ -407,6 +427,19 @@ func _tick_bot(p: Dictionary, player_idx: int, delta: float) -> void:
 
 	spd = clampf(spd, 0.0, NC.MAX_SPEED * 1.05)
 	p["move_speed"] = spd
+
+	# --- Motion FSM (mirrors _tick_player) ---
+	var motion = p.get("motion")
+	if motion != null:
+		motion.max_speed_ref = NC.MAX_SPEED
+		var lin: int = motion.resolve_linear(spd, target_cap, sail.get_target_sail_level(), sail.current_sail_level)
+		var tf: Dictionary = motion.compute_turn_flags(spd, helm.rudder_angle)
+		p["linear_motion_state"] = lin
+		p["motion_is_turning"] = bool(tf.get("is_turning", false))
+		p["motion_is_turning_hard"] = bool(tf.get("is_turning_hard", false))
+	var helm_st: int = int(helm.get_helm_state())
+	if helm_st != int(p.get("helm_state_prev", -1)):
+		p["helm_state_prev"] = helm_st
 
 	# --- Position update ---
 	var dir_wx: float = p.dir.x
@@ -471,6 +504,8 @@ func _tick_bot(p: Dictionary, player_idx: int, delta: float) -> void:
 	if fired_any:
 		p.atk_time = ATK_DUR
 		p.hit_landed = false
+		print("[Arena] Bot %s fired — port=%s stbd=%s dist=%.0f" % [
+			str(p.get("label", "?")), fire_port, fire_stbd, target_dist_m])
 	p.atk_time = maxf(p.atk_time - delta, 0.0)
 
 	# --- Update aim side based on target bearing ---
@@ -516,8 +551,8 @@ func _register_inputs() -> void:
 	_set_action_keys(_ACTIONS.atk, [KEY_F])
 	_ensure_joy_button_for_action(_ACTIONS.atk, JOY_BUTTON_X)
 
-	_set_action_keys(BROADSIDE_PORT_ACTION, [KEY_E, KEY_LEFT])
-	_set_action_keys(BROADSIDE_STBD_ACTION, [KEY_Q, KEY_RIGHT])
+	_set_action_keys(BROADSIDE_PORT_ACTION, [KEY_E])
+	_set_action_keys(BROADSIDE_STBD_ACTION, [KEY_Q])
 	_ensure_joy_button_for_action(BROADSIDE_PORT_ACTION, JOY_BUTTON_LEFT_SHOULDER)
 	_ensure_joy_button_for_action(BROADSIDE_STBD_ACTION, JOY_BUTTON_RIGHT_SHOULDER)
 
@@ -580,6 +615,7 @@ func _process(delta: float) -> void:
 	_tick_muzzle_fx(delta)
 	_tick_local_timers(delta)
 	_tick_respawn(delta)
+	_update_hud_fade_timers(delta)
 	var pan_dir := Vector2.ZERO
 	if Input.is_key_pressed(KEY_UP):
 		pan_dir.y -= 1.0
@@ -598,6 +634,57 @@ func _process(delta: float) -> void:
 		if world_scale > 0.001:
 			_camera_world_anchor += pan_dir.normalized() * _CAM_PAN_SPEED * delta / world_scale
 	queue_redraw()
+
+
+func _update_hud_fade_timers(delta: float) -> void:
+	if _players.is_empty():
+		return
+	var p: Dictionary = _players[_my_index]
+	var helm = p.get("helm")
+	var sail = p.get("sail")
+
+	var rudder_changing: bool = false
+	var sail_changing: bool = false
+	var elev_adjusting: bool = Input.is_action_pressed(ELEV_UP_ACTION) or Input.is_action_pressed(ELEV_DOWN_ACTION)
+
+	if helm != null:
+		var cur_rudder: float = helm.rudder_angle
+		var cur_wheel_vel: float = helm.wheel_velocity
+		rudder_changing = absf(cur_wheel_vel) > 0.02 or absf(cur_rudder - _prev_rudder_angle) > 0.005
+		_prev_rudder_angle = cur_rudder
+		_prev_wheel_velocity = cur_wheel_vel
+
+	if sail != null:
+		var cur_sail: int = int(sail.sail_state)
+		sail_changing = cur_sail != _prev_sail_state and _prev_sail_state >= 0
+		if sail_changing:
+			_prev_sail_state = cur_sail
+		elif _prev_sail_state < 0:
+			_prev_sail_state = int(sail.sail_state)
+
+	if rudder_changing or sail_changing:
+		_fade_path_line = _HUD_FADE_DURATION
+	else:
+		_fade_path_line = maxf(0.0, _fade_path_line - delta)
+
+	if elev_adjusting:
+		_fade_accuracy_ring = _HUD_FADE_DURATION
+		_fade_ballistics_arc = _HUD_FADE_DURATION
+		_fade_elev_hud = _HUD_FADE_DURATION
+	else:
+		_fade_accuracy_ring = maxf(0.0, _fade_accuracy_ring - delta)
+		_fade_ballistics_arc = maxf(0.0, _fade_ballistics_arc - delta)
+		_fade_elev_hud = maxf(0.0, _fade_elev_hud - delta)
+
+	_prev_elev_adjusting = elev_adjusting
+
+
+func _hud_fade_alpha(fade_timer: float) -> float:
+	if fade_timer >= _HUD_FADE_DURATION:
+		return 1.0
+	if fade_timer <= 0.0:
+		return 0.0
+	return clampf(fade_timer / _HUD_FADE_DURATION, 0.0, 1.0)
 
 func _steer_strengths(pad_id: int) -> Vector2:
 	var steer_l: float = 0.0
@@ -647,7 +734,7 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 	var spd_for_turn: float = float(p.get("move_speed", 0.0))
 	var turn_deg: float = NC.turn_rate_deg_for_speed(spd_for_turn)
 	var max_turn_rad: float = deg_to_rad(turn_deg)
-	var steer_auth: float = clampf(spd_for_turn / 8.25, 0.0, 1.0)
+	var steer_auth: float = maxf(NC.RUDDER_AUTHORITY_MIN, clampf(spd_for_turn / NC.RUDDER_AUTHORITY_SPEED, 0.0, 1.0))
 	var target_av: float = max_turn_rad * helm.rudder_angle * steer_auth
 	var tau: float = NC.HELM_TURN_LAG_SEC
 	ang_vel = lerpf(ang_vel, target_av, 1.0 - exp(-delta / tau))
@@ -916,9 +1003,8 @@ func _point_hits_ship_ellipse(point: Vector2, ship: Dictionary) -> bool:
 	var lat: float = rel.dot(perp)
 	var a: float = NC.SHIP_LENGTH_UNITS * 0.5
 	var b: float = NC.SHIP_WIDTH_UNITS * 0.5
-	# Slightly relaxed edge for readable hit registration.
 	var k: float = (fwd * fwd) / (a * a) + (lat * lat) / (b * b)
-	return k <= 1.15
+	return k <= NC.ELLIPSE_HIT_SLACK
 
 
 func _resolve_collisions() -> void:
@@ -945,7 +1031,27 @@ func _spawn_muzzle_fx(wx: float, wy: float, dir: Vector2) -> void:
 	_muzzle_flash_fx.append({"wx": wx, "wy": wy, "dirx": dir.x, "diry": dir.y, "t": 0.0})
 	_muzzle_smoke_fx.append({"wx": wx, "wy": wy, "t": 0.0})
 
-func _fire_projectile(p: Dictionary, spread_bias: float = 0.0, shot_damage: float = PROJECTILE_DAMAGE, aim_override: Variant = null, battery: Variant = null) -> void:
+func _nearest_enemy_dir(p: Dictionary) -> Vector2:
+	var ship_pos := Vector2(float(p.wx), float(p.wy))
+	var my_peer: int = int(p.get("peer_id", -999999))
+	var best_dist: float = INF
+	var best_dir: Vector2 = Vector2.ZERO
+	for q in _players:
+		if int(q.get("peer_id", -888888)) == my_peer:
+			continue
+		if not bool(q.get("alive", true)):
+			continue
+		var to_q: Vector2 = Vector2(float(q.wx), float(q.wy)) - ship_pos
+		var dist: float = to_q.length()
+		if dist < 0.05:
+			continue
+		if dist < best_dist:
+			best_dist = dist
+			best_dir = to_q / dist
+	return best_dir
+
+
+func _fire_projectile(p: Dictionary, spread_bias: float = 0.0, shot_damage: float = 1.0, aim_override: Variant = null, battery: Variant = null) -> void:
 	var dir: Vector2
 	if aim_override is Vector2 and aim_override.length_squared() > 0.001:
 		dir = aim_override.normalized()
@@ -969,8 +1075,11 @@ func _fire_projectile(p: Dictionary, spread_bias: float = 0.0, shot_damage: floa
 	var hull_n: Vector2 = Vector2(float(p.dir.x), float(p.dir.y)).normalized()
 	if hull_n.length_squared() < 0.001:
 		hull_n = Vector2.RIGHT
-	var angle_from_bow: float = rad_to_deg(acos(clampf(hull_n.dot(dir), -1.0, 1.0)))
-	var quality: float = NC.broadside_quality(angle_from_bow)
+	var to_enemy: Vector2 = _nearest_enemy_dir(p)
+	var quality: float = 1.0
+	if to_enemy.length_squared() > 0.001:
+		var angle_from_bow: float = rad_to_deg(acos(clampf(hull_n.dot(to_enemy), -1.0, 1.0)))
+		quality = NC.broadside_quality(angle_from_bow)
 	spread_deg *= (1.0 / maxf(0.1, quality))
 	p["shot_seq"] = shot_seq + 1
 	var shot_dir: Vector2 = dir.rotated(spread_bias + deg_to_rad(spread_deg)).normalized()
@@ -993,6 +1102,7 @@ func _fire_projectile(p: Dictionary, spread_bias: float = 0.0, shot_damage: floa
 		vx *= s
 		vy *= s
 		vz *= s
+	var hull_dmg: float = HULL_DAMAGE_PER_HIT
 	if multiplayer.has_multiplayer_peer():
 		_spawn_cannonball_rpc.rpc(
 			start_x,
@@ -1003,7 +1113,7 @@ func _fire_projectile(p: Dictionary, spread_bias: float = 0.0, shot_damage: floa
 			_CannonBallistics.MUZZLE_HEIGHT,
 			mass,
 			owner_peer,
-			shot_damage
+			hull_dmg
 		)
 	else:
 		_spawn_cannonball_local(
@@ -1015,7 +1125,7 @@ func _fire_projectile(p: Dictionary, spread_bias: float = 0.0, shot_damage: floa
 			_CannonBallistics.MUZZLE_HEIGHT,
 			mass,
 			owner_peer,
-			shot_damage
+			hull_dmg
 		)
 
 
@@ -1085,7 +1195,7 @@ func _tick_projectiles(delta: float) -> void:
 		var vz: float = float(proj.get("vz", 0.0))
 		var t_flight: float = float(proj.get("t_flight", 0.0))
 		var owner_peer: int = int(proj.get("owner_peer", 0))
-		var dmg: float = float(proj.get("damage", PROJECTILE_DAMAGE))
+		var dmg: float = float(proj.get("damage", HULL_DAMAGE_PER_HIT))
 		var arm_t: float = float(proj.get("arm_t", 0.0))
 
 		var time_left: float = delta
@@ -1283,14 +1393,14 @@ func _draw_muzzle_fx() -> void:
 		draw_circle(sp, rr, Color(0.22, 0.22, 0.24, 0.28 * fade))
 
 
-func _apply_cannon_hit_impl(attacker_peer_id: int, defender_peer_id: int, _damage: float) -> void:
+func _apply_cannon_hit_impl(attacker_peer_id: int, defender_peer_id: int, damage: float) -> void:
 	var defender_idx: int = _find_player_index_by_peer_id(defender_peer_id)
 	if defender_idx < 0:
 		return
 	var d: Dictionary = _players[defender_idx]
 	if not bool(d.get("alive", true)):
 		return
-	var new_health: float = maxf(float(d.health) - 1.0, 0.0)
+	var new_health: float = maxf(float(d.health) - damage, 0.0)
 	var defender_alive: bool = new_health > 0.0
 	d.health = new_health
 	d.alive = defender_alive
@@ -1343,6 +1453,11 @@ func _respawn_ship(idx: int) -> void:
 	p["walk_time"] = 0.0
 	p["moving"] = false
 	_apply_naval_controllers_to_ship(p)
+	if bool(p.get("is_bot", false)):
+		_apply_bot_helm_overrides(p)
+	var bc: Variant = _get_bot_controller_for_index(idx)
+	if bc != null:
+		bc.reset_combat_state()
 
 
 ## Naval sandbox: deaths respawn — do not end the match on last standing ship.
@@ -1435,7 +1550,9 @@ func _draw_player(p: Dictionary) -> void:
 	var notch: Vector2 = draw_pos - fwd * px_len * 0.12
 	var mod_color: Color = p.palette[0]
 	var edge_col: Color = Color(0.08, 0.09, 0.12, 0.92)
-	draw_colored_polygon(PackedVector2Array([nose, tail_l, notch, tail_r]), mod_color)
+	var hull_poly := PackedVector2Array([nose, tail_l, notch, tail_r])
+	if px_len > 1.0 and px_wid > 1.0:
+		draw_colored_polygon(hull_poly, mod_color)
 	draw_polyline(PackedVector2Array([nose, tail_l, notch, tail_r, nose]), edge_col, 2.0 * _zoom, true)
 	draw_circle(draw_pos + Vector2(0.0, 12.0 * _zoom), 4.0 * _zoom, mod_color)
 	var font := ThemeDB.fallback_font
@@ -1549,13 +1666,13 @@ func _draw_top_down_ocean(vp: Vector2) -> void:
 		gy += grid_spacing
 
 
-func _draw_accuracy_bands(center: Vector2, screen_y_offset_px: float = 0.0) -> void:
+func _draw_accuracy_bands(center: Vector2, screen_y_offset_px: float = 0.0, alpha_mult: float = 1.0) -> void:
 	var bands: Array[Dictionary] = [
-		{"r0": 0.0, "r1": NC.ACC_PISTOL_RANGE, "col": Color(0.1, 0.95, 0.2, 0.06), "label": "90%"},
-		{"r0": NC.ACC_PISTOL_RANGE, "r1": NC.ACC_CLOSE_RANGE, "col": Color(0.3, 0.9, 0.15, 0.05), "label": "75%"},
-		{"r0": NC.ACC_CLOSE_RANGE, "r1": NC.ACC_MUSKET_RANGE, "col": Color(0.9, 0.85, 0.1, 0.045), "label": "50%"},
-		{"r0": NC.ACC_MUSKET_RANGE, "r1": NC.ACC_MEDIUM_RANGE, "col": Color(0.95, 0.5, 0.08, 0.04), "label": "25%"},
-		{"r0": NC.ACC_MEDIUM_RANGE, "r1": NC.ACC_LONG_RANGE, "col": Color(0.95, 0.15, 0.08, 0.035), "label": "10%"},
+		{"r0": 0.0, "r1": NC.ACC_PISTOL_RANGE, "col": Color(0.1, 0.95, 0.2, 0.06 * alpha_mult), "label": "Pistol"},
+		{"r0": NC.ACC_PISTOL_RANGE, "r1": NC.ACC_CLOSE_RANGE, "col": Color(0.3, 0.9, 0.15, 0.05 * alpha_mult), "label": "Point Blank"},
+		{"r0": NC.ACC_CLOSE_RANGE, "r1": NC.ACC_MUSKET_RANGE, "col": Color(0.9, 0.85, 0.1, 0.045 * alpha_mult), "label": "Effective"},
+		{"r0": NC.ACC_MUSKET_RANGE, "r1": NC.ACC_MEDIUM_RANGE, "col": Color(0.95, 0.5, 0.08, 0.04 * alpha_mult), "label": "Long"},
+		{"r0": NC.ACC_MEDIUM_RANGE, "r1": NC.ACC_LONG_RANGE, "col": Color(0.95, 0.15, 0.08, 0.035 * alpha_mult), "label": "Extreme"},
 	]
 	var segs: int = 72
 	for band in bands:
@@ -1584,7 +1701,7 @@ func _draw_accuracy_bands(center: Vector2, screen_y_offset_px: float = 0.0) -> v
 		var ly: float = center.y + sin(label_ang) * r_mid
 		var sp: Vector2 = _w2s(lx, ly) + Vector2(0.0, screen_y_offset_px)
 		draw_string(ThemeDB.fallback_font, sp, String(band.label),
-			HORIZONTAL_ALIGNMENT_CENTER, -1, label_font_size, Color(1, 1, 1, 0.55))
+			HORIZONTAL_ALIGNMENT_CENTER, -1, label_font_size, Color(1, 1, 1, 0.55 * alpha_mult))
 
 
 func _draw() -> void:
@@ -1603,8 +1720,10 @@ func _draw() -> void:
 	if not me.is_empty() and bool(me.get("alive", true)):
 		me_deck_y_off = -NC.SHIP_DECK_HEIGHT_UNITS * _CannonBallistics.SCREEN_HEIGHT_PX_PER_UNIT * _zoom
 	var me_world: Vector2 = Vector2(float(me.wx), float(me.wy)) if not me.is_empty() else cam_focus
-	_draw_accuracy_bands(me_world, me_deck_y_off)
-	_draw_world_range_ring(me_world, NC.MAX_CANNON_RANGE, Color(1.0, 0.25, 0.1, 0.7), 2.4, me_deck_y_off)
+	var ring_alpha: float = _hud_fade_alpha(_fade_accuracy_ring)
+	if ring_alpha > 0.01:
+		_draw_accuracy_bands(me_world, me_deck_y_off, ring_alpha)
+		_draw_world_range_ring(me_world, NC.MAX_CANNON_RANGE, Color(1.0, 0.25, 0.1, 0.7 * ring_alpha), 2.4, me_deck_y_off)
 	_draw_splash_fx()
 
 	var sorted := _players.duplicate()
@@ -1617,8 +1736,11 @@ func _draw() -> void:
 		_draw_combat_debug_world_overlays()
 
 	_draw_muzzle_fx()
-	_draw_ship_trajectory_arc_preview()
-	_draw_trajectory_arc_preview()
+	if _fade_path_line > 0.01:
+		_draw_ship_trajectory_arc_preview(_hud_fade_alpha(_fade_path_line))
+	if _fade_ballistics_arc > 0.01:
+		_draw_trajectory_arc_preview(_hud_fade_alpha(_fade_ballistics_arc))
+	_draw_aim_cursor()
 	_draw_projectiles()
 	_draw_hull_strike_fx()
 	_draw_motion_battery_hud(vp)
@@ -1626,7 +1748,8 @@ func _draw() -> void:
 	_draw_ftl_ship_hud(vp)
 	_draw_offscreen_indicators(vp)
 	_draw_hud(vp)
-	_draw_keybindings_panel(vp)
+	if pause_menu_panel != null and pause_menu_panel.visible:
+		_draw_keybindings_panel(vp)
 	_draw_ability_bar(vp)
 	_draw_bot_debug_hud(vp)
 	if _winner != -2:
@@ -1724,35 +1847,70 @@ func _draw_offscreen_indicators(vp: Vector2) -> void:
 
 
 func _draw_bot_debug_hud(vp: Vector2) -> void:
-	if not OS.is_debug_build():
-		return
-	if not combat_debug_hud_enabled:
-		return
-	if _bot_controllers.is_empty():
+	if _bot_indices.is_empty():
 		return
 	var font := ThemeDB.fallback_font
-	var fs: int = 11
-	var panel_w: float = 220.0
-	var x: float = vp.x - panel_w
-	var y: float = 10.0
-	var label_colors: Array = [
-		Color(0.95, 0.40, 0.35, 1.0),  # red
-		Color(1.00, 0.80, 0.30, 1.0),  # gold
-		Color(0.80, 0.55, 0.95, 1.0),  # purple
-	]
-	for ci in range(_bot_controllers.size()):
-		var ctrl: Variant = _bot_controllers[ci]
-		if ctrl == null or not bool(ctrl.show_debug_hud_panel):
+	var fs: int = 10
+	var panel_w: float = 260.0
+	var x: float = 10.0
+	var total_lines: int = 0
+	for ci in range(_bot_indices.size()):
+		var bi: int = _bot_indices[ci]
+		if bi < 0 or bi >= _players.size():
 			continue
-		var text: String = ctrl.get_debug_text()
-		var lines: PackedStringArray = text.split("\n")
-		var panel_h: float = float(lines.size()) * 15.0 + 10.0
-		draw_rect(Rect2(x - 5.0, y - 2.0, panel_w, panel_h), Color(0.0, 0.0, 0.0, 0.55))
+		if bool(_players[bi].get("alive", false)):
+			total_lines += 8
+		else:
+			total_lines += 6
+	var y: float = vp.y - float(total_lines) * 13.0 - 24.0
+	var label_colors: Array = [
+		Color(0.95, 0.40, 0.35, 1.0),
+		Color(1.00, 0.80, 0.30, 1.0),
+		Color(0.80, 0.55, 0.95, 1.0),
+	]
+	for ci in range(_bot_indices.size()):
+		var bi: int = _bot_indices[ci]
+		if bi < 0 or bi >= _players.size():
+			continue
+		var p: Dictionary = _players[bi]
 		var col: Color = label_colors[ci % label_colors.size()]
+		var lines: Array[String] = []
+		var ship_label: String = str(p.get("label", "Bot%d" % ci))
+		var alive: bool = bool(p.get("alive", false))
+		lines.append("── %s (%s) ──" % [ship_label, "ALIVE" if alive else "DEAD"])
+		if not alive:
+			var rt: float = float(p.get("respawn_timer", 0.0))
+			lines.append("  Respawn: %.1fs" % rt)
+		else:
+			var spd: float = float(p.get("move_speed", 0.0))
+			var ang_v: float = float(p.get("angular_velocity", 0.0))
+			lines.append("  Spd: %.1f  AngVel: %.2f" % [spd, ang_v])
+			var sail_obj = p.get("sail")
+			if sail_obj != null:
+				lines.append("  Sail: %s  Deploy: %d%%" % [sail_obj.get_display_name(), int(sail_obj.current_sail_level * 100.0)])
+			var helm_obj = p.get("helm")
+			if helm_obj != null:
+				var rud_deg: float = helm_obj.rudder_angle * _HelmController.MAX_RUDDER_DEFLECTION_DEG
+				lines.append("  Helm: %s  Rudder: %.0f°" % [helm_obj.get_helm_state_label(), rud_deg])
+		var ctrl: Variant = null
+		if ci < _bot_controllers.size():
+			ctrl = _bot_controllers[ci]
+		if ctrl != null:
+			lines.append("  BT: %s  Man: %s" % [ctrl.current_bt_state, ctrl.last_maneuver])
+			lines.append("  Dist: %.0f  Band: %s  Bearing: %.0f°" % [ctrl.distance_to_target, NavalCombatEvaluator.band_name(ctrl.range_band), ctrl.bearing_to_target_deg])
+			lines.append("  Steer: L%.1f R%.1f  Sail: %d" % [ctrl.steer_left, ctrl.steer_right, ctrl.desired_sail_state])
+			lines.append("  Block: %s" % ctrl.fire_block_reason)
+			if not ctrl._bt_initialised:
+				lines.append("  !! BT INIT FAILED")
+		else:
+			lines.append("  !! NO CONTROLLER")
+
+		var panel_h: float = float(lines.size()) * 13.0 + 6.0
+		draw_rect(Rect2(x - 5.0, y - 2.0, panel_w, panel_h), Color(0.0, 0.0, 0.0, 0.62))
 		for line in lines:
-			draw_string(font, Vector2(x, y + 12.0), line, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
-			y += 15.0
-		y += 8.0  # gap between bot panels
+			draw_string(font, Vector2(x, y + 11.0), line, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
+			y += 13.0
+		y += 6.0
 
 
 func _draw_projectiles() -> void:
@@ -1778,7 +1936,7 @@ func _draw_projectiles() -> void:
 		draw_circle(sp, rad, core)
 
 
-func _draw_trajectory_arc_preview() -> void:
+func _draw_trajectory_arc_preview(alpha_mult: float = 1.0) -> void:
 	if _players.is_empty():
 		return
 	var p: Dictionary = _players[_my_index]
@@ -1794,18 +1952,22 @@ func _draw_trajectory_arc_preview() -> void:
 	var stbd_b: Variant = p.get("battery_stbd")
 	var sel_port_arc: bool = bool(p.get("aim_broadside_port", true))
 	if port_b != null and sel_port_arc:
-		batteries.append({"bat": port_b, "aim": hull_n.rotated(PI * 0.5), "col": Color(1.0, 0.28, 0.22, 0.82)})
+		batteries.append({"bat": port_b, "aim": hull_n.rotated(PI * 0.5), "col": Color(1.0, 0.28, 0.22, 0.82 * alpha_mult)})
 	if stbd_b != null and not sel_port_arc:
-		batteries.append({"bat": stbd_b, "aim": hull_n.rotated(-PI * 0.5), "col": Color(1.0, 0.45, 0.18, 0.82)})
+		batteries.append({"bat": stbd_b, "aim": hull_n.rotated(-PI * 0.5), "col": Color(1.0, 0.45, 0.18, 0.82 * alpha_mult)})
 	for bd in batteries:
-		_draw_single_battery_arc(p, bd.aim, bd.bat, bd.col)
+		_draw_single_battery_arc(p, bd.aim, bd.bat, bd.col, alpha_mult)
 
 
-func _draw_single_battery_arc(p: Dictionary, aim_dir: Vector2, bat: _BatteryController, color: Color) -> void:
+func _draw_single_battery_arc(p: Dictionary, aim_dir: Vector2, bat: _BatteryController, color: Color, alpha_mult: float = 1.0) -> void:
 	var shot_damage: float = bat.damage_per_shot_for_current_mode()
 	var mass: float = _CannonBallistics.mass_from_damage(shot_damage)
-	var est_range: float = NC.OPTIMAL_RANGE
+	var est_range: float = float(p.get("_naval_acc_dist", NC.OPTIMAL_RANGE))
+	if est_range < 0.0 or est_range > NC.MAX_CANNON_RANGE:
+		est_range = NC.OPTIMAL_RANGE
 	var spread_deg: float = NC.spread_deg_for_range(est_range)
+	if bool(p.get("motion_is_turning", false)):
+		spread_deg *= NC.TURNING_SPREAD_MULT
 	var dirs: Array[Vector2] = [aim_dir, aim_dir.rotated(deg_to_rad(spread_deg)), aim_dir.rotated(deg_to_rad(-spread_deg))]
 	var elev_deg_arc: float = bat.elevation_degrees()
 	for idx in range(dirs.size()):
@@ -1850,11 +2012,11 @@ func _draw_single_battery_arc(p: Dictionary, aim_dir: Vector2, bat: _BatteryCont
 		draw_polyline(points, line_col, line_w, true)
 		if idx == 0:
 			for i in range(0, points.size(), 4):
-				var alpha: float = lerpf(0.8, 0.15, float(i) / maxf(1.0, float(points.size() - 1)))
-				draw_circle(points[i], 1.4, Color(color.r, color.g, color.b, alpha))
+				var dot_alpha: float = lerpf(0.8, 0.15, float(i) / maxf(1.0, float(points.size() - 1))) * alpha_mult
+				draw_circle(points[i], 1.4, Color(color.r, color.g, color.b, dot_alpha))
 
 
-func _draw_ship_trajectory_arc_preview() -> void:
+func _draw_ship_trajectory_arc_preview(alpha_mult: float = 1.0) -> void:
 	if _players.is_empty():
 		return
 	var p: Dictionary = _players[_my_index]
@@ -1873,11 +2035,6 @@ func _draw_ship_trajectory_arc_preview() -> void:
 	var wy: float = float(p.wy)
 	var spd: float = float(p.get("move_speed", 0.0))
 	var ang_vel: float = float(p.get("angular_velocity", 0.0))
-	if _helm_arc_sim == null:
-		_helm_arc_sim = _HelmController.new()
-	_helm_arc_sim.copy_from(helm)
-	var steer_arc: Vector2 = _steer_strengths(_get_primary_pad_id())
-	var dt_step: float = clampf(get_physics_process_delta_time(), 1.0 / 120.0, 1.0 / 30.0)
 
 	var target_cap: float = 0.0
 	var sails_provide_thrust: bool = true
@@ -1892,40 +2049,42 @@ func _draw_ship_trajectory_arc_preview() -> void:
 			target_cap = NC.SAILS_DOWN_DRIFT_SPEED
 			sails_provide_thrust = false
 
-	var drag_mult: float = COAST_DRAG_MULT if float(sail.current_sail_level) < float(sail.coast_drag_threshold) else 1.0
 	var accel_r: float = NC.accel_rate()
 	var decel_r: float = NC.decel_rate_sails()
 	var tau: float = maxf(0.001, NC.HELM_TURN_LAG_SEC)
 	var sim_t: float = 0.0
-	var sim_max_t: float = 90.0
+	var sim_max_t: float = 45.0
 	var points: PackedVector2Array = PackedVector2Array()
+	var deck_lift_y: float = -(NC.SHIP_DECK_HEIGHT_UNITS * _CannonBallistics.SCREEN_HEIGHT_PX_PER_UNIT * _zoom) - 2.0 * _zoom
+	var deck_off: Vector2 = Vector2(0.0, deck_lift_y)
+	var dt_step: float = 1.0 / 60.0
+	var sim_sail_level: float = float(sail.current_sail_level)
+	var sim_sail_target: float = float(sail.get_target_sail_level())
+	var sim_sail_rate: float = float(sail.sail_raise_rate) if sim_sail_level < sim_sail_target else float(sail.sail_lower_rate)
+	var sim_coast_thresh: float = float(sail.coast_drag_threshold)
 
-	var spd_for_turn: float = spd
-
+	var preview_rudder: float = helm.rudder_angle
 	while sim_t <= sim_max_t:
-		points.append(_w2s(wx, wy))
+		points.append(_w2s(wx, wy) + deck_off)
 
-		# Identical helm integration as gameplay (wheel accel, friction, return, rudder lag).
-		_helm_arc_sim.process_steer(dt_step, steer_arc.x, steer_arc.y)
-		var rudder: float = _helm_arc_sim.rudder_angle
+		var rudder: float = preview_rudder
 
-		# Turning (uses pre-drag speed, matching _tick_player).
-		var turn_deg: float = NC.turn_rate_deg_for_speed(spd_for_turn)
+		var turn_deg: float = NC.turn_rate_deg_for_speed(spd)
 		var max_turn_rad: float = deg_to_rad(turn_deg)
-		var steer_auth: float = clampf(spd_for_turn / 8.25, 0.0, 1.0)
+		var steer_auth: float = maxf(NC.RUDDER_AUTHORITY_MIN, clampf(spd / NC.RUDDER_AUTHORITY_SPEED, 0.0, 1.0))
 		var target_av: float = max_turn_rad * rudder * steer_auth
 		ang_vel = lerpf(ang_vel, target_av, 1.0 - exp(-dt_step / tau))
 		hull = hull.rotated(ang_vel * dt_step).normalized()
 
-		# Speed / drag (matching _tick_player order).
-		spd_for_turn = spd
+		sim_sail_level = move_toward(sim_sail_level, sim_sail_target, sim_sail_rate * dt_step)
+		var drag_mult: float = COAST_DRAG_MULT if sim_sail_level < sim_coast_thresh else 1.0
 		var sim_drift_floor: float = NC.SAILS_DOWN_DRIFT_SPEED if not sails_provide_thrust and spd > 0.01 else 0.0
 		if spd < target_cap and sails_provide_thrust:
 			spd = minf(spd + accel_r * dt_step, target_cap)
 		elif spd > target_cap and sails_provide_thrust:
 			spd = maxf(0.0, spd - decel_r * drag_mult * dt_step)
 		spd = maxf(sim_drift_floor, spd - MOTION_PASSIVE_DRAG_K * spd * drag_mult * dt_step)
-		if float(sail.current_sail_level) < float(sail.coast_drag_threshold):
+		if sim_sail_level < sim_coast_thresh:
 			spd = maxf(sim_drift_floor, spd - MOTION_ZERO_SAIL_DRAG * drag_mult * dt_step)
 		var rud_abs: float = absf(rudder)
 		spd = maxf(sim_drift_floor, spd - rud_abs * MOTION_TURNING_SPEED_LOSS * dt_step)
@@ -1939,10 +2098,66 @@ func _draw_ship_trajectory_arc_preview() -> void:
 
 	if points.size() < 2:
 		return
-	draw_polyline(points, Color(0.36, 0.86, 1.0, 0.82), 2.4, true)
+	draw_polyline(points, Color(0.36, 0.86, 1.0, 0.82 * alpha_mult), 2.4, true)
 	for i in range(0, points.size(), 6):
-		var a: float = lerpf(0.85, 0.18, float(i) / maxf(1.0, float(points.size() - 1)))
+		var a: float = lerpf(0.85, 0.18, float(i) / maxf(1.0, float(points.size() - 1))) * alpha_mult
 		draw_circle(points[i], 1.7, Color(0.62, 0.95, 1.0, a))
+
+
+func _draw_aim_cursor() -> void:
+	if _players.is_empty():
+		return
+	var p: Dictionary = _players[_my_index]
+	if not bool(p.get("alive", true)):
+		return
+	var hull_n: Vector2 = Vector2(float(p.dir.x), float(p.dir.y))
+	if hull_n.length_squared() < 0.0001:
+		hull_n = Vector2.RIGHT
+	hull_n = hull_n.normalized()
+	var sel_port: bool = bool(p.get("aim_broadside_port", true))
+	var aim_dir: Vector2 = hull_n.rotated(PI * 0.5) if sel_port else hull_n.rotated(-PI * 0.5)
+	var bat: Variant = p.get("battery_port") if sel_port else p.get("battery_stbd")
+	if bat == null:
+		return
+	var elev_deg: float = bat.elevation_degrees()
+	var shot_damage: float = bat.damage_per_shot_for_current_mode()
+	var mass: float = _CannonBallistics.mass_from_damage(shot_damage)
+	var vel: Dictionary = _CannonBallistics.initial_velocity(aim_dir, mass, NC.CANNON_LINE_SPEED_SCALE, elev_deg)
+	var vx: float = float(vel.vx)
+	var vy: float = float(vel.vy)
+	var vz: float = float(vel.vz)
+	var hs_now: float = sqrt(vx * vx + vy * vy)
+	var desired_hs: float = NC.PROJECTILE_SPEED * lerpf(1.1, 0.85, clampf((mass - 0.5) / 1.25, 0.0, 1.0))
+	if hs_now > 0.001:
+		var s: float = desired_hs / hs_now
+		vx *= s
+		vy *= s
+		vz *= s
+	var muzzle: float = 6.5
+	var wx0: float = float(p.wx) + aim_dir.x * muzzle
+	var wy0: float = float(p.wy) + aim_dir.y * muzzle
+	var h0: float = _CannonBallistics.MUZZLE_HEIGHT
+	var grav: float = _CannonBallistics.GRAVITY * NC.PROJECTILE_GRAVITY_SCALE
+	var disc: float = vz * vz + 2.0 * grav * h0
+	var t_splash: float = (vz + sqrt(maxf(0.0, disc))) / maxf(0.001, grav)
+	var impact_t: float = minf(t_splash, NC.PROJECTILE_LIFETIME)
+	var impact_wx: float = wx0 + vx * impact_t
+	var impact_wy: float = wy0 + vy * impact_t
+	var sp: Vector2 = _w2s(impact_wx, impact_wy)
+
+	var impact_dist: float = Vector2(impact_wx - float(p.wx), impact_wy - float(p.wy)).length()
+	var spread_deg: float = NC.spread_deg_for_range(minf(impact_dist, NC.MAX_CANNON_RANGE))
+	if bool(p.get("motion_is_turning", false)):
+		spread_deg *= NC.TURNING_SPREAD_MULT
+	var spread_world: float = impact_dist * tan(deg_to_rad(spread_deg))
+	var r: float = maxf(8.0, spread_world) * _zoom
+	var col: Color = Color(1.0, 0.35, 0.15, 0.85)
+	draw_arc(sp, r, 0.0, TAU, 32, col, 1.8 * _zoom, true)
+	var tick: float = r * 0.35
+	draw_line(sp + Vector2(-r - tick, 0.0), sp + Vector2(-r + tick, 0.0), col, 1.5 * _zoom, true)
+	draw_line(sp + Vector2(r - tick, 0.0), sp + Vector2(r + tick, 0.0), col, 1.5 * _zoom, true)
+	draw_line(sp + Vector2(0.0, -r - tick), sp + Vector2(0.0, -r + tick), col, 1.5 * _zoom, true)
+	draw_line(sp + Vector2(0.0, r - tick), sp + Vector2(0.0, r + tick), col, 1.5 * _zoom, true)
 
 
 func _draw_motion_battery_hud(_vp: Vector2) -> void:
@@ -1982,7 +2197,15 @@ func _draw_motion_battery_hud(_vp: Vector2) -> void:
 	var cap: float = 0.0
 	var sail = p.get("sail")
 	if sail != null:
-		cap = float(sail.max_speed)
+		match sail.sail_state:
+			_SailController.SailState.FULL:
+				cap = NC.MAX_SPEED
+			_SailController.SailState.HALF:
+				cap = NC.CRUISE_SPEED
+			_SailController.SailState.QUARTER:
+				cap = NC.QUARTER_SPEED
+			_:
+				cap = NC.SAILS_DOWN_DRIFT_SPEED
 	draw_string(font, Vector2(x, y + 88.0), "Speed %.2f / %.1f" % [spd, cap], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, dim)
 
 	var bat_y: float = y + 108.0
@@ -2019,63 +2242,92 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 	var p: Dictionary = _players[_my_index]
 	var font: Font = ThemeDB.fallback_font
 	var sel_fire_battery: bool = bool(p.get("aim_broadside_port", true))
-	var hw: float = 60.0
-	var hh: float = 160.0
+	var hw: float = 64.0
+	var hh: float = 180.0
 	var cx: float = vp.x - hw - 20.0
 	var cy: float = vp.y * 0.5
-	var panel_bg: Color = Color(0.04, 0.06, 0.10, 0.88)
-	draw_rect(Rect2(cx - hw - 8.0, cy - hh * 0.5 - 24.0, hw * 2.0 + 16.0, hh + 48.0), panel_bg)
-	draw_rect(Rect2(cx - hw - 8.0, cy - hh * 0.5 - 24.0, hw * 2.0 + 16.0, hh + 48.0), Color(0.22, 0.30, 0.42, 0.9), false, 1.5)
-	draw_string(font, Vector2(cx - hw + 2.0, cy - hh * 0.5 - 8.0), "Ship Status", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.82, 0.88, 0.96, 0.95))
+	var panel_x: float = cx - hw - 10.0
+	var panel_y: float = cy - hh * 0.5 - 28.0
+	var panel_w: float = hw * 2.0 + 20.0
+	var panel_h: float = hh + 80.0
 
-	var hull_col: Color = Color(0.32, 0.28, 0.22, 0.95)
-	var nose: Vector2 = Vector2(cx, cy - hh * 0.46)
-	var mid_l: Vector2 = Vector2(cx - hw * 0.7, cy - hh * 0.05)
-	var mid_r: Vector2 = Vector2(cx + hw * 0.7, cy - hh * 0.05)
-	var stern_l: Vector2 = Vector2(cx - hw * 0.5, cy + hh * 0.42)
-	var stern_r: Vector2 = Vector2(cx + hw * 0.5, cy + hh * 0.42)
-	var stern_c: Vector2 = Vector2(cx, cy + hh * 0.38)
-	var ship_poly: PackedVector2Array = PackedVector2Array([nose, mid_r, stern_r, stern_c, stern_l, mid_l])
-	draw_colored_polygon(ship_poly, hull_col)
-	draw_polyline(PackedVector2Array([nose, mid_r, stern_r, stern_c, stern_l, mid_l, nose]), Color(0.52, 0.48, 0.38, 0.9), 1.5, true)
+	draw_rect(Rect2(panel_x, panel_y, panel_w, panel_h), Color(0.03, 0.05, 0.09, 0.92))
+	draw_rect(Rect2(panel_x + 1.0, panel_y + 1.0, panel_w - 2.0, panel_h - 2.0), Color(0.18, 0.24, 0.36, 0.85), false, 1.0)
+	draw_rect(Rect2(panel_x, panel_y, panel_w, panel_h), Color(0.28, 0.36, 0.50, 0.9), false, 1.5)
+
+	var title_y: float = panel_y + 16.0
+	draw_string(font, Vector2(cx - 28.0, title_y), "SHIP STATUS", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.72, 0.78, 0.88, 0.9))
+	draw_line(Vector2(panel_x + 6.0, title_y + 4.0), Vector2(panel_x + panel_w - 6.0, title_y + 4.0), Color(0.28, 0.36, 0.48, 0.6), 1.0)
+
+	var hull_dark: Color = Color(0.24, 0.20, 0.16, 0.95)
+	var hull_mid: Color = Color(0.38, 0.32, 0.24, 0.92)
+	var bow_tip: Vector2 = Vector2(cx, cy - hh * 0.44)
+	var bow_l: Vector2 = Vector2(cx - hw * 0.35, cy - hh * 0.32)
+	var bow_r: Vector2 = Vector2(cx + hw * 0.35, cy - hh * 0.32)
+	var fwd_l: Vector2 = Vector2(cx - hw * 0.62, cy - hh * 0.15)
+	var fwd_r: Vector2 = Vector2(cx + hw * 0.62, cy - hh * 0.15)
+	var mid_l: Vector2 = Vector2(cx - hw * 0.72, cy + hh * 0.02)
+	var mid_r: Vector2 = Vector2(cx + hw * 0.72, cy + hh * 0.02)
+	var aft_l: Vector2 = Vector2(cx - hw * 0.65, cy + hh * 0.22)
+	var aft_r: Vector2 = Vector2(cx + hw * 0.65, cy + hh * 0.22)
+	var stern_l: Vector2 = Vector2(cx - hw * 0.48, cy + hh * 0.38)
+	var stern_r: Vector2 = Vector2(cx + hw * 0.48, cy + hh * 0.38)
+	var transom: Vector2 = Vector2(cx, cy + hh * 0.35)
+	var hull_poly: PackedVector2Array = PackedVector2Array([
+		bow_tip, bow_r, fwd_r, mid_r, aft_r, stern_r, transom, stern_l, aft_l, mid_l, fwd_l, bow_l])
+	draw_colored_polygon(hull_poly, hull_dark)
+	draw_polyline(PackedVector2Array([
+		bow_tip, bow_r, fwd_r, mid_r, aft_r, stern_r, transom, stern_l, aft_l, mid_l, fwd_l, bow_l, bow_tip]),
+		hull_mid, 1.8, true)
+
+	draw_line(Vector2(cx, cy - hh * 0.42), Vector2(cx, cy - hh * 0.50), Color(0.55, 0.45, 0.30, 0.85), 2.0, true)
+	draw_line(Vector2(cx - 8.0, cy - hh * 0.50), Vector2(cx + 8.0, cy - hh * 0.50), Color(0.55, 0.45, 0.30, 0.7), 1.5, true)
+	draw_line(Vector2(cx, cy - hh * 0.08), Vector2(cx, cy - hh * 0.32), Color(0.50, 0.42, 0.28, 0.7), 1.5, true)
+	draw_line(Vector2(cx - 12.0, cy - hh * 0.28), Vector2(cx + 12.0, cy - hh * 0.28), Color(0.50, 0.42, 0.28, 0.6), 1.2, true)
+	draw_line(Vector2(cx, cy + 0.0), Vector2(cx, cy + hh * 0.15), Color(0.50, 0.42, 0.28, 0.6), 1.2, true)
 
 	var hp: float = float(p.get("health", HULL_HITS_MAX))
 	var hp_frac: float = clampf(hp / HULL_HITS_MAX, 0.0, 1.0)
-	var zone_names: Array[String] = ["Bow", "Fwd", "Mid", "Aft", "Stern"]
+
+	var zone_names: Array[String] = ["Bowsprit", "Bow", "Fwd Gun", "Mid", "Main", "Aft Gun", "Quarter", "Stern"]
 	var zone_count: int = zone_names.size()
-	var zone_y_start: float = cy - hh * 0.40
-	var zone_h: float = hh * 0.80 / float(zone_count)
-	var zone_w: float = hw * 1.0
+	var zone_y_start: float = cy - hh * 0.42
+	var zone_total_h: float = hh * 0.80
+	var zone_h: float = zone_total_h / float(zone_count)
+
+	var zone_widths: Array[float] = [0.30, 0.50, 0.68, 0.72, 0.72, 0.65, 0.52, 0.40]
 	for zi in range(zone_count):
 		var zy: float = zone_y_start + float(zi) * zone_h
+		var zw: float = hw * zone_widths[zi]
 		var zone_hp: float = hp_frac
 		var zone_col: Color
-		if zone_hp > 0.6:
-			zone_col = Color(0.25, 0.55, 0.32, 0.7)
-		elif zone_hp > 0.3:
-			zone_col = Color(0.72, 0.58, 0.22, 0.7)
-		else:
-			zone_col = Color(0.78, 0.22, 0.18, 0.7)
 		if hp <= 0.0:
-			zone_col = Color(0.15, 0.12, 0.10, 0.6)
-		draw_rect(Rect2(cx - zone_w * 0.5, zy, zone_w, zone_h - 2.0), zone_col)
-		draw_rect(Rect2(cx - zone_w * 0.5, zy, zone_w, zone_h - 2.0), Color(0.42, 0.46, 0.52, 0.6), false, 1.0)
-		draw_string(font, Vector2(cx - zone_w * 0.5 + 3.0, zy + zone_h - 6.0), zone_names[zi], HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0.88, 0.90, 0.95, 0.9))
+			zone_col = Color(0.12, 0.10, 0.08, 0.5)
+		elif zone_hp > 0.7:
+			zone_col = Color(0.18, 0.48, 0.28, 0.55)
+		elif zone_hp > 0.4:
+			zone_col = Color(0.62, 0.52, 0.18, 0.55)
+		elif zone_hp > 0.15:
+			zone_col = Color(0.72, 0.32, 0.14, 0.55)
+		else:
+			zone_col = Color(0.78, 0.18, 0.12, 0.65)
+		draw_rect(Rect2(cx - zw * 0.5, zy + 1.0, zw, zone_h - 2.0), zone_col)
+		draw_line(Vector2(cx - zw * 0.5, zy + zone_h - 1.0), Vector2(cx + zw * 0.5, zy + zone_h - 1.0), Color(0.40, 0.44, 0.52, 0.35), 0.8)
+		var lbl_col: Color = Color(0.82, 0.85, 0.92, 0.75)
+		draw_string(font, Vector2(cx - zw * 0.5 + 3.0, zy + zone_h - 4.0), zone_names[zi], HORIZONTAL_ALIGNMENT_LEFT, -1, 8, lbl_col)
 
-	var bat_icon_r: float = 5.0
+	var bat_icon_r: float = 6.0
 	var bat_entries: Array[Dictionary] = []
 	var port_b: Variant = p.get("battery_port")
 	var stbd_b: Variant = p.get("battery_stbd")
 	if port_b != null:
-		bat_entries.append({"bat": port_b, "pos": Vector2(cx - hw * 0.85, cy - hh * 0.05), "label": "P"})
+		bat_entries.append({"bat": port_b, "pos": Vector2(cx - hw * 0.88, cy - hh * 0.05), "label": "P"})
 	if stbd_b != null:
-		bat_entries.append({"bat": stbd_b, "pos": Vector2(cx + hw * 0.85, cy - hh * 0.05), "label": "S"})
+		bat_entries.append({"bat": stbd_b, "pos": Vector2(cx + hw * 0.88, cy - hh * 0.05), "label": "S"})
 	for be in bat_entries:
 		var bat: _BatteryController = be.bat
 		var bp: Vector2 = be.pos
 		var is_ready: bool = bat.state == _BatteryController.BatteryState.READY
-		var is_aiming: bool = bat.state == _BatteryController.BatteryState.AIMING
-		var is_idle: bool = bat.state == _BatteryController.BatteryState.IDLE
 		var reloading: bool = bat.state == _BatteryController.BatteryState.RELOADING
 		var firing: bool = bat.state == _BatteryController.BatteryState.FIRING
 		var disabled: bool = bat.state == _BatteryController.BatteryState.DISABLED
@@ -2089,37 +2341,32 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 			state_label = "FIRING"
 		elif reloading:
 			var prog: float = bat.reload_progress()
-			bc = Color(lerpf(0.7, 0.35, prog), lerpf(0.25, 0.72, prog), 0.3, 0.9)
+			bc = Color(lerpf(0.65, 0.30, prog), lerpf(0.22, 0.68, prog), 0.28, 0.9)
 			state_label = "RELOAD %d%%" % int(prog * 100.0)
 		elif is_ready:
-			bc = Color(0.2, 0.88, 0.35, 0.95)
+			bc = Color(0.2, 0.85, 0.35, 0.95)
 			state_label = "READY"
-		elif is_aiming:
-			bc = Color(0.65, 0.72, 0.35, 0.85)
-			state_label = "AIM"
-		elif is_idle:
-			bc = Color(0.45, 0.48, 0.55, 0.7)
-			state_label = "IDLE"
 		else:
 			bc = Color(0.45, 0.48, 0.55, 0.7)
-			state_label = "—"
-		draw_circle(bp, bat_icon_r, bc)
-		draw_arc(bp, bat_icon_r, 0.0, TAU, 16, Color(0.7, 0.75, 0.82, 0.8), 1.0, true)
+			state_label = bat.state_display()
+		draw_circle(bp, bat_icon_r, Color(0.06, 0.08, 0.12, 0.9))
+		draw_circle(bp, bat_icon_r - 1.5, bc)
+		draw_arc(bp, bat_icon_r, 0.0, TAU, 20, Color(0.6, 0.65, 0.75, 0.7), 1.2, true)
 		var bat_is_selected: bool = (bat.side == _BatteryController.BatterySide.PORT and sel_fire_battery) \
 			or (bat.side == _BatteryController.BatterySide.STARBOARD and not sel_fire_battery)
 		if bat_is_selected:
-			draw_arc(bp, bat_icon_r + 4.0, 0.0, TAU, 24, Color(1.0, 0.9, 0.35, 0.9), 2.0, true)
+			draw_arc(bp, bat_icon_r + 3.5, 0.0, TAU, 24, Color(1.0, 0.88, 0.30, 0.92), 2.0, true)
 		if is_ready:
 			var pulse: float = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.006)
-			draw_arc(bp, bat_icon_r + 2.5, 0.0, TAU, 16, Color(0.2, 1.0, 0.4, 0.4 * pulse), 1.5, true)
+			draw_arc(bp, bat_icon_r + 2.0, 0.0, TAU, 16, Color(0.2, 1.0, 0.4, 0.35 * pulse), 1.5, true)
 		if reloading:
-			draw_arc(bp, bat_icon_r + 2.0, -PI * 0.5, -PI * 0.5 + TAU * bat.reload_progress(), 16, Color(0.85, 0.72, 0.35, 0.9), 2.0, true)
+			draw_arc(bp, bat_icon_r + 2.0, -PI * 0.5, -PI * 0.5 + TAU * bat.reload_progress(), 16, Color(0.82, 0.70, 0.32, 0.9), 2.2, true)
 		draw_string(font, bp + Vector2(-3.0, 3.5), be.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 8, Color(0.95, 0.95, 1.0, 0.95))
 		var lbl_offset: Vector2
 		match bat.side:
 			_BatteryController.BatterySide.PORT:
 				lbl_offset = Vector2(-bat_icon_r - 4.0, 3.5)
-				draw_string(font, bp + lbl_offset, state_label, HORIZONTAL_ALIGNMENT_RIGHT, int(bat_icon_r * 6.0), 7, bc)
+				draw_string(font, bp + lbl_offset, state_label, HORIZONTAL_ALIGNMENT_RIGHT, int(bat_icon_r * 8.0), 7, bc)
 			_BatteryController.BatterySide.STARBOARD:
 				lbl_offset = Vector2(bat_icon_r + 4.0, 3.5)
 				draw_string(font, bp + lbl_offset, state_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, bc)
@@ -2127,34 +2374,53 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 				lbl_offset = Vector2(-16.0, bat_icon_r + 9.0)
 				draw_string(font, bp + lbl_offset, state_label, HORIZONTAL_ALIGNMENT_CENTER, 32, 7, bc)
 
-	var hp_bar_x: float = cx - hw - 4.0
-	var hp_bar_y: float = cy + hh * 0.5 + 6.0
-	var hp_bar_w: float = hw * 2.0 + 8.0
-	draw_rect(Rect2(hp_bar_x, hp_bar_y, hp_bar_w, 10.0), Color(0.08, 0.1, 0.14, 0.92))
+	# Gun port dots along the hull sides.
+	var gun_count: int = 8
+	for gi in range(gun_count):
+		var t: float = 0.18 + float(gi) / float(gun_count - 1) * 0.58
+		var gy: float = cy - hh * 0.42 + zone_total_h * t
+		var gw_t: float = lerpf(0.50, 0.72, clampf((t - 0.1) / 0.4, 0.0, 1.0))
+		if t > 0.6:
+			gw_t = lerpf(0.72, 0.45, clampf((t - 0.6) / 0.3, 0.0, 1.0))
+		var gx_off: float = hw * gw_t * 0.5 - 2.0
+		var gc: Color = Color(0.55, 0.48, 0.32, 0.7)
+		draw_rect(Rect2(cx - gx_off - 2.5, gy - 1.0, 5.0, 2.0), gc)
+		draw_rect(Rect2(cx + gx_off - 2.5, gy - 1.0, 5.0, 2.0), gc)
+
+	var hp_bar_x: float = panel_x + 6.0
+	var hp_bar_y: float = cy + hh * 0.5 - 4.0
+	var hp_bar_w: float = panel_w - 12.0
+	draw_rect(Rect2(hp_bar_x, hp_bar_y, hp_bar_w, 12.0), Color(0.06, 0.08, 0.12, 0.95))
+	draw_rect(Rect2(hp_bar_x, hp_bar_y, hp_bar_w, 12.0), Color(0.25, 0.30, 0.42, 0.7), false, 1.0)
 	var hp_col: Color
 	if hp_frac > 0.6:
-		hp_col = Color(0.3, 0.78, 0.38, 0.92)
+		hp_col = Color(0.25, 0.72, 0.35, 0.92)
 	elif hp_frac > 0.3:
-		hp_col = Color(0.82, 0.72, 0.25, 0.92)
+		hp_col = Color(0.78, 0.68, 0.22, 0.92)
 	else:
-		hp_col = Color(0.88, 0.25, 0.2, 0.92)
-	draw_rect(Rect2(hp_bar_x, hp_bar_y, hp_bar_w * hp_frac, 10.0), hp_col)
-	draw_string(font, Vector2(hp_bar_x, hp_bar_y + 22.0), "Hull %d / %d" % [int(maxf(hp, 0.0)), int(HULL_HITS_MAX)], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.88, 0.90, 0.96, 0.95))
-	var elev_y: float = hp_bar_y + 34.0
+		hp_col = Color(0.85, 0.22, 0.18, 0.92)
+	draw_rect(Rect2(hp_bar_x + 1.0, hp_bar_y + 1.0, (hp_bar_w - 2.0) * hp_frac, 10.0), hp_col)
+	for tick_i in range(1, int(HULL_HITS_MAX)):
+		var tx: float = hp_bar_x + hp_bar_w * (float(tick_i) / HULL_HITS_MAX)
+		draw_line(Vector2(tx, hp_bar_y + 1.0), Vector2(tx, hp_bar_y + 11.0), Color(0.12, 0.14, 0.18, 0.6), 0.8)
+	draw_string(font, Vector2(hp_bar_x, hp_bar_y + 24.0), "Hull %d / %d" % [int(maxf(hp, 0.0)), int(HULL_HITS_MAX)], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.85, 0.88, 0.95, 0.95))
+
+	var elev_y: float = hp_bar_y + 36.0
+	var elev_alpha: float = _hud_fade_alpha(_fade_elev_hud)
 	var ref_bat: Variant = p.get("battery_port") if sel_fire_battery else p.get("battery_stbd")
-	if ref_bat != null:
+	if ref_bat != null and elev_alpha > 0.01:
 		var elev_val: float = ref_bat.cannon_elevation
 		var elev_deg: float = ref_bat.elevation_degrees()
-		var elev_col: Color = Color(0.6, 0.75, 0.95, 0.9)
-		draw_rect(Rect2(hp_bar_x, elev_y, hp_bar_w, 8.0), Color(0.08, 0.1, 0.14, 0.92))
-		draw_rect(Rect2(hp_bar_x, elev_y, hp_bar_w * elev_val, 8.0), elev_col)
+		var elev_col: Color = Color(0.6, 0.75, 0.95, 0.9 * elev_alpha)
+		draw_rect(Rect2(hp_bar_x, elev_y, hp_bar_w, 8.0), Color(0.06, 0.08, 0.12, 0.92 * elev_alpha))
+		draw_rect(Rect2(hp_bar_x + 1.0, elev_y + 1.0, (hp_bar_w - 2.0) * elev_val, 6.0), elev_col)
 		var tick_x: float = hp_bar_x + hp_bar_w * elev_val
-		draw_rect(Rect2(tick_x - 1.0, elev_y - 1.0, 3.0, 10.0), Color(1.0, 1.0, 1.0, 0.9))
+		draw_rect(Rect2(tick_x - 1.0, elev_y - 1.0, 3.0, 10.0), Color(1.0, 1.0, 1.0, 0.9 * elev_alpha))
 		var zero_frac: float = absf(ref_bat.ELEV_MIN_DEG) / (ref_bat.ELEV_MAX_DEG - ref_bat.ELEV_MIN_DEG)
 		var zero_x: float = hp_bar_x + hp_bar_w * zero_frac
-		draw_rect(Rect2(zero_x - 0.5, elev_y - 2.0, 1.0, 12.0), Color(1.0, 1.0, 0.6, 0.7))
+		draw_rect(Rect2(zero_x - 0.5, elev_y - 2.0, 1.0, 12.0), Color(1.0, 1.0, 0.6, 0.7 * elev_alpha))
 		var sign_str: String = "+" if elev_deg >= 0.0 else ""
-		draw_string(font, Vector2(hp_bar_x, elev_y + 20.0), "Quoin %s%.1f° (R↑ T↓)" % [sign_str, elev_deg], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, elev_col)
+		draw_string(font, Vector2(hp_bar_x, elev_y + 20.0), "Quoin %s%.1f° (R/T)" % [sign_str, elev_deg], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, elev_col)
 
 
 func _draw_helm_sail_hud(vp: Vector2) -> void:
@@ -2176,9 +2442,8 @@ func _draw_helm_sail_hud(vp: Vector2) -> void:
 	draw_string(font, Vector2(x, y + 36.0), "Sail: %s" % sail.get_display_name(), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, txt)
 	draw_string(font, Vector2(x, y + 54.0), "Deploy %d%%" % int(clampf(sail.current_sail_level, 0.0, 1.0) * 100.0), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, sub)
 	var spd_u: float = float(p.get("move_speed", 0.0))
-	var spd_mps: float = spd_u * _METERS_PER_WORLD_UNIT
-	var spd_kn: float = spd_mps * _KNOTS_PER_METER_PER_SEC
-	draw_string(font, Vector2(x, y + 68.0), "Speed: %.2f u/s · %.1f m/s · %.1f kn" % [spd_u, spd_mps, spd_kn], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, txt)
+	var spd_kn: float = spd_u * _KNOTS_PER_GAME_UNIT
+	draw_string(font, Vector2(x, y + 68.0), "Speed: %.1f kn" % spd_kn, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, txt)
 
 	var bar_w: float = panel_w - 8.0
 	var sail_y: float = y + 86.0
@@ -2285,8 +2550,8 @@ func _draw_keybindings_panel(vp: Vector2) -> void:
 	var line_h: float = 13.0
 	var lines: Array[String] = [
 		"Bindings (keyboard · gamepad)",
-		"E / ← / LB: select PORT battery (aim + elevation + fire target)",
-		"Q / → / RB: select STARBOARD battery",
+		"E / LB: select PORT battery (aim + elevation + fire target)",
+		"Q / RB: select STARBOARD battery",
 		"F / X / RT: fire selected battery only",
 		"Steer: %s / %s" % [_action_keys_display(_ACTIONS.left), _action_keys_display(_ACTIONS.right)],
 		"Sail up · down: %s · %s" % [_action_keys_display(SAIL_RAISE_ACTION), _action_keys_display(SAIL_LOWER_ACTION)],
@@ -2294,7 +2559,8 @@ func _draw_keybindings_panel(vp: Vector2) -> void:
 		"Elevation up · down: %s · %s" % [_action_keys_display(ELEV_UP_ACTION), _action_keys_display(ELEV_DOWN_ACTION)],
 		"Wheel lock toggle: %s" % _action_keys_display(WHEEL_LOCK_ACTION),
 		"Zoom: mouse wheel or +/- buttons (top-right)",
-		"Pan: arrow keys or middle-mouse drag · 1/Home/Tab: lock camera to follow your ship",
+		"Pan: arrow keys or middle-mouse drag",
+		"1 / Home / Tab: lock camera to follow your ship",
 	]
 	if OS.is_debug_build():
 		lines.append("Debug (dev build): F3 bot HUD · F4 bot world overlays")

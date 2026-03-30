@@ -297,9 +297,9 @@ func _on_test_button_pressed() -> void:
 	get_tree().change_scene_to_file(test_scene_path)
 
 func _on_exit_button_pressed() -> void:
-	quit_confirm_dialog.title = "Exit FireTeam MNG"
+	quit_confirm_dialog.title = "Exit Ironwake"
 	quit_confirm_dialog.ok_button_text = "Exit Game"
-	quit_confirm_dialog.dialog_text = "Are you sure you want to close FireTeam MNG and return to desktop?"
+	quit_confirm_dialog.dialog_text = "Are you sure you want to close Ironwake and return to desktop?"
 	quit_confirm_dialog.popup_centered()
 
 func _on_settings_button_pressed() -> void:
@@ -354,7 +354,7 @@ func _refresh_lobby_browser() -> void:
 		lobby_list_status.text = "Steam not initialized yet."
 		_rebuild_lobby_list([])
 		return
-	lobby_list_status.text = "Scanning for FireTeam MNG operations..."
+	lobby_list_status.text = "Scanning for Ironwake operations..."
 	SteamManager.request_burnbridgers_lobby_list()
 	_rebuild_lobby_list(SteamManager.get_cached_public_lobbies())
 
@@ -367,9 +367,9 @@ func _on_join_lobby_from_list(target_lobby_id: int) -> void:
 func _on_lobby_list_updated(lobbies: Array) -> void:
 	_rebuild_lobby_list(lobbies)
 	if lobbies.is_empty():
-		lobby_list_status.text = "No public FireTeam MNG operations found."
+		lobby_list_status.text = "No public Ironwake operations found."
 	else:
-		lobby_list_status.text = "%d FireTeam MNG operation(s) found." % lobbies.size()
+		lobby_list_status.text = "%d Ironwake operation(s) found." % lobbies.size()
 
 func _rebuild_lobby_list(lobbies: Array) -> void:
 	for child in lobby_list.get_children():
@@ -389,7 +389,7 @@ func _rebuild_lobby_list(lobbies: Array) -> void:
 
 		var name_label := Label.new()
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var lobby_name: String = str(item.get("name", "FireTeam MNG Operation"))
+		var lobby_name: String = str(item.get("name", "Ironwake Operation"))
 		var members: int = int(item.get("members", 0))
 		name_label.text = "%s (%d/%d)" % [lobby_name, members, GameConstants.MAX_PLAYERS]
 		UiStyleScript.style_body(name_label)

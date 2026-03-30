@@ -1,5 +1,9 @@
 ## AI brain for an enemy ship.  Owns a LimboAI BTPlayer, manages the blackboard,
 ## and translates BT outputs into helm/sail/fire intents.  (req-ai-naval-bot-v1)
+##
+## The core decision logic lives in limbo_tick_*() methods invoked by a
+## LimboAI BTPlayer/BTSelector.  LimboAI is required — the game will error
+## if the GDExtension is missing or fails to initialise.
 class_name NavalBotController
 extends Node
 
@@ -7,13 +11,24 @@ const _Evaluator := preload("res://scripts/shared/naval_combat_evaluator.gd")
 const _SailController := preload("res://scripts/shared/sail_controller.gd")
 const _BatteryController := preload("res://scripts/shared/battery_controller.gd")
 
+## Match LimboAI BT.Status enum values (FRESH=0, RUNNING=1, FAILURE=2, SUCCESS=3).
+## Defined locally so the script compiles even if the GDExtension isn't loaded.
+const _ST_RUNNING: int = 1
+const _ST_FAILURE: int = 2
+const _ST_SUCCESS: int = 3
+
 ## The BotShipAgent Node2D that wraps the ship dictionary.
 var agent: BotShipAgent = null
 ## Reference to the player's ship dictionary (the target).
 var target_dict: Dictionary = {}
 
 ## LimboAI runner — MANUAL update from update().
-var bt_player: BTPlayer = null
+## Typed as Node (not BTPlayer) so the script parses without the GDExtension.
+var bt_player: Node = null
+## True once the LimboAI path has been successfully set up.
+var _bt_initialised: bool = false
+## True after the first setup attempt (prevents retrying every frame on failure).
+var _bt_setup_attempted: bool = false
 
 # ── Output intents (read by arena's _tick_bot) ────────────────────────
 var steer_left: float = 0.0
@@ -63,39 +78,81 @@ var show_debug_hud_panel: bool = false
 ## Verbose print() for pass / reposition / stuck / side switch (off by default).
 var debug_log_events: bool = false
 var current_bt_state: String = "init"
-## Log once if Limbo GDExtension failed to register (wrong Godot version, missing binaries).
-var _limbo_missing_logged: bool = false
 
 
 func _ready() -> void:
-	# GDExtension classes may register after the first frame; deferred improves first-run reliability.
 	call_deferred("_setup_bt_player")
 
 
 func _setup_bt_player() -> void:
-	if bt_player != null:
+	if _bt_initialised or _bt_setup_attempted:
 		return
-	if not ClassDB.class_exists("BTPlayer"):
+	_bt_setup_attempted = true
+
+	if not ClassDB.class_exists(&"BTPlayer"):
+		push_error("NavalBotController: LimboAI not loaded — BTPlayer class not found")
 		return
-	bt_player = BTPlayer.new()
-	bt_player.name = "NavalBTPlayer"
-	bt_player.update_mode = BTPlayer.MANUAL
-	bt_player.active = true
-	add_child(bt_player)
-	if is_instance_valid(get_parent()):
-		bt_player.set_scene_root_hint(get_parent())
-	# Limbo resolves agent_node from BTPlayer's node, not from this controller.
-	if agent != null and is_instance_valid(agent):
-		bt_player.agent_node = bt_player.get_path_to(agent)
-	bt_player.behavior_tree = NavalBTDuelTree.build()
-	var bb: Blackboard = bt_player.blackboard
-	if bb != null:
-		bb.set_var(&"controller", self)
+
+	var tree_script = load("res://scripts/shared/naval_bt_duel_tree.gd")
+	if tree_script == null:
+		push_error("NavalBotController: naval_bt_duel_tree.gd failed to load")
+		return
+	var tree = tree_script.build()
+	if tree == null:
+		push_error("NavalBotController: NavalBTDuelTree.build() returned null")
+		return
+
+	var player: Node = ClassDB.instantiate(&"BTPlayer")
+	if player == null:
+		push_error("NavalBotController: ClassDB.instantiate BTPlayer failed")
+		return
+	player.name = "NavalBTPlayer"
+	player.set("update_mode", 2)   # BTPlayer.MANUAL = 2
+
+	add_child(player)
+
+	# Set owner to our parent (the arena) BEFORE setting behavior_tree.
+	# The behavior_tree setter calls _try_initialize() which needs
+	# _get_scene_root() → get_owner() to return a valid node.
+	var root_hint: Node = get_parent()
+	if root_hint == null:
+		push_error("NavalBotController: get_parent() is null — cannot set BTPlayer owner")
+		player.queue_free()
+		return
+	player.owner = root_hint
+
+	player.set("behavior_tree", tree)
+	player.set("active", true)
+
+	var bb = player.get("blackboard")
+	if bb == null:
+		push_error("NavalBotController: BTPlayer blackboard is null — tree init may have failed")
+		player.queue_free()
+		return
+	bb.call("set_var", &"controller", self)
+
+	bt_player = player
+	_bt_initialised = true
+	print("[NavalBot %s] BTPlayer initialised — owner=%s, active=%s, behavior_tree=%s, blackboard=%s" % [
+		name, str(root_hint), str(player.get("active")), str(player.get("behavior_tree") != null), str(bb != null)])
 
 
 ## Main update — called each frame by arena's _tick_bot().
+var _update_log_count: int = 0
+var _periodic_log_timer: float = 0.0
+const _PERIODIC_LOG_INTERVAL: float = 2.0
 func update(delta: float) -> void:
+	var should_log_initial: bool = _update_log_count < 5
+	_periodic_log_timer += delta
+	var should_log_periodic: bool = _periodic_log_timer >= _PERIODIC_LOG_INTERVAL
+	if should_log_periodic:
+		_periodic_log_timer = 0.0
+	var should_log: bool = should_log_initial or should_log_periodic
+
 	if agent == null or agent.ship_dict.is_empty():
+		if should_log_initial:
+			print("[NavalBot %s] update: agent null or empty" % name)
+			_update_log_count += 1
 		return
 	if not agent.is_alive():
 		steer_left = 0.0
@@ -106,25 +163,28 @@ func update(delta: float) -> void:
 
 	_tick_timers(delta)
 	_update_combat_context()
-	_sync_limbo_blackboard()
 
-	# LimboAI behavior tree drives maneuvers; reset outputs then let tasks write intents.
 	steer_left = 0.0
 	steer_right = 0.0
 	fire_port_intent = false
 	fire_stbd_intent = false
-	if bt_player == null:
-		_setup_bt_player()
-	if bt_player == null or bt_player.behavior_tree == null:
-		if not _limbo_missing_logged:
-			push_error(
-				"NavalBotController: LimboAI is required for naval bots. "
-				+ "Ensure addons/limboai is present, limboai.gdextension loads (Godot 4.6+ per LimboAI 1.7.x), "
-				+ "and restart the editor. Project Settings → Limbo AI should list res://ai/tasks/naval for custom tasks."
-			)
-			_limbo_missing_logged = true
-		return
-	bt_player.update(delta)
+
+	if _bt_initialised and bt_player != null:
+		_sync_limbo_blackboard()
+		bt_player.call("update", delta)
+		if should_log:
+			print("[NavalBot %s] BT ticked — steer=L%.2f/R%.2f fire=P%s/S%s sail=%d state=%s dist=%.0f band=%d spd=%.1f bearing=%.0f" % [
+				name, steer_left, steer_right, fire_port_intent, fire_stbd_intent,
+				desired_sail_state, current_bt_state, distance_to_target, range_band,
+				agent.get_speed(), bearing_to_target_deg])
+			if should_log_initial:
+				_update_log_count += 1
+	else:
+		if should_log:
+			print("[NavalBot %s] update: BT NOT running — _bt_initialised=%s bt_player=%s _bt_setup_attempted=%s" % [
+				name, _bt_initialised, bt_player != null, _bt_setup_attempted])
+			if should_log_initial:
+				_update_log_count += 1
 
 
 func _tick_timers(delta: float) -> void:
@@ -186,30 +246,60 @@ func _update_combat_context() -> void:
 
 
 func _sync_limbo_blackboard() -> void:
-	if bt_player == null or bt_player.blackboard == null:
+	if bt_player == null:
 		return
-	var bb: Blackboard = bt_player.blackboard
+	var bb = bt_player.get("blackboard")
+	if bb == null:
+		return
 	var rs: int = int(_BatteryController.BatteryState.READY)
 	var port_b: Variant = agent.get_battery_port() if agent != null else null
 	var stbd_b: Variant = agent.get_battery_stbd() if agent != null else null
-	bb.set_var(&"distance_to_target", distance_to_target)
-	bb.set_var(&"bearing_to_target_deg", bearing_to_target_deg)
-	bb.set_var(&"broadside_quality_port", float(broadside_result.get("quality_port", 0.0)))
-	bb.set_var(&"broadside_quality_starboard", float(broadside_result.get("quality_stbd", 0.0)))
-	bb.set_var(&"best_broadside_quality", float(broadside_result.get("best_quality", 0.0)))
-	bb.set_var(&"best_broadside_side", str(broadside_result.get("best_side", "none")))
-	bb.set_var(&"in_preferred_range", range_band == _Evaluator.RangeBand.PREFERRED)
-	bb.set_var(&"too_close", range_band == _Evaluator.RangeBand.TOO_CLOSE)
-	bb.set_var(&"too_far", range_band == _Evaluator.RangeBand.TOO_FAR or range_band == _Evaluator.RangeBand.BEYOND_MAX)
-	bb.set_var(&"currently_repositioning", currently_repositioning)
-	bb.set_var(&"recently_fired", recently_fired)
-	bb.set_var(&"stuck_timer", stuck_timer)
-	bb.set_var(&"last_maneuver", last_maneuver)
-	bb.set_var(&"fire_block_reason", fire_block_reason)
-	bb.set_var(&"port_loaded", port_b != null and int(port_b.state) == rs)
-	bb.set_var(&"starboard_loaded", stbd_b != null and int(stbd_b.state) == rs)
-	bb.set_var(&"recently_hit", hit_reaction_timer > 0.0)
-	bb.set_var(&"last_hit_attacker_peer_id", last_hit_attacker_peer_id)
+	bb.call("set_var", &"distance_to_target", distance_to_target)
+	bb.call("set_var", &"bearing_to_target_deg", bearing_to_target_deg)
+	bb.call("set_var", &"broadside_quality_port", float(broadside_result.get("quality_port", 0.0)))
+	bb.call("set_var", &"broadside_quality_starboard", float(broadside_result.get("quality_stbd", 0.0)))
+	bb.call("set_var", &"best_broadside_quality", float(broadside_result.get("best_quality", 0.0)))
+	bb.call("set_var", &"best_broadside_side", str(broadside_result.get("best_side", "none")))
+	bb.call("set_var", &"in_preferred_range", range_band == _Evaluator.RangeBand.PREFERRED)
+	bb.call("set_var", &"too_close", range_band == _Evaluator.RangeBand.TOO_CLOSE)
+	bb.call("set_var", &"too_far", range_band == _Evaluator.RangeBand.TOO_FAR or range_band == _Evaluator.RangeBand.BEYOND_MAX)
+	bb.call("set_var", &"currently_repositioning", currently_repositioning)
+	bb.call("set_var", &"recently_fired", recently_fired)
+	bb.call("set_var", &"stuck_timer", stuck_timer)
+	bb.call("set_var", &"last_maneuver", last_maneuver)
+	bb.call("set_var", &"fire_block_reason", fire_block_reason)
+	bb.call("set_var", &"port_loaded", port_b != null and int(port_b.state) == rs)
+	bb.call("set_var", &"starboard_loaded", stbd_b != null and int(stbd_b.state) == rs)
+	bb.call("set_var", &"recently_hit", hit_reaction_timer > 0.0)
+	bb.call("set_var", &"last_hit_attacker_peer_id", last_hit_attacker_peer_id)
+
+
+## Clear all combat timers and flags so the bot starts fresh after respawn.
+func reset_combat_state() -> void:
+	currently_repositioning = false
+	recently_fired = false
+	_pending_fire_delay = 0.0
+	_pending_fire_side = ""
+	fire_stability_timer = 0.0
+	maneuver_lock_timer = 0.0
+	post_fire_lockout_timer = 0.0
+	reposition_timer = 0.0
+	reposition_turn_dir = 0.0
+	turn_commit_timer = 0.0
+	turn_commit_direction = 0.0
+	side_switch_cooldown_timer = 0.0
+	hit_reaction_timer = 0.0
+	stuck_timer = 0.0
+	fire_block_reason = ""
+	current_bt_state = "init"
+	last_maneuver = "idle"
+	broadside_result = {}
+	range_band = _Evaluator.RangeBand.BEYOND_MAX
+	distance_to_target = 9999.0
+	bearing_to_target_deg = 0.0
+	_update_log_count = 0
+	_periodic_log_timer = 0.0
+	print("[NavalBot %s] combat state reset" % name)
 
 
 ## Called from arena when this bot receives a registered cannon hit (not every frame).
@@ -230,8 +320,8 @@ func notify_cannon_hit(attacker_peer_id: int) -> void:
 
 func limbo_tick_recover(_delta: float) -> int:
 	if stuck_timer < _Evaluator.STUCK_DETECTION_TIME:
-		return BT.Status.FAILURE
-	return BT.Status.SUCCESS if _try_recover_if_stuck(_delta) else BT.Status.FAILURE
+		return _ST_FAILURE
+	return _ST_SUCCESS if _try_recover_if_stuck(_delta) else _ST_FAILURE
 
 
 func limbo_tick_fire(delta: float) -> int:
@@ -242,34 +332,34 @@ func limbo_tick_fire(delta: float) -> int:
 			_pending_fire_delay = 0.0
 			_pending_fire_side = ""
 			fire_block_reason = "fire_delay_cancelled"
-			return BT.Status.FAILURE
+			return _ST_FAILURE
 		current_bt_state = "fire_commit"
 		last_maneuver = "fire_delay"
 		fire_block_reason = "reaction_delay"
 		_steer_for_broadside_on_side(_pending_fire_side)
 		if _pending_fire_delay > 0.0:
-			return BT.Status.RUNNING
+			return _ST_RUNNING
 		if _commit_broadside_volley(str(_pending_fire_side)):
-			return BT.Status.SUCCESS
-		return BT.Status.FAILURE
+			return _ST_SUCCESS
+		return _ST_FAILURE
 
 	if currently_repositioning or recently_fired:
 		fire_block_reason = "repositioning"
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 	if post_fire_lockout_timer > 0.0:
 		fire_block_reason = "post_fire_lockout"
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 
 	var best_q: float = float(broadside_result.get("best_quality", 0.0))
 	var best_side_str: String = str(broadside_result.get("best_side", "none"))
 	if best_q < _Evaluator.FIRE_THRESHOLD:
 		fire_block_reason = "quality_%.2f_below_threshold" % best_q
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 	if fire_stability_timer < _Evaluator.FIRE_STABILITY_TIME:
 		fire_block_reason = "stability_timer_%.2f" % fire_stability_timer
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 	if best_side_str == "none":
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 
 	_pending_fire_delay = randf_range(_Evaluator.FIRE_REACTION_DELAY_MIN, _Evaluator.FIRE_REACTION_DELAY_MAX)
 	_pending_fire_side = best_side_str
@@ -281,48 +371,48 @@ func limbo_tick_fire(delta: float) -> int:
 			best_side_str, best_q, _pending_fire_delay, distance_to_target,
 		])
 	_steer_for_broadside_on_side(best_side_str)
-	return BT.Status.RUNNING
+	return _ST_RUNNING
 
 
 func limbo_tick_breakaway(delta: float) -> int:
 	if range_band != _Evaluator.RangeBand.TOO_CLOSE:
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 	_pending_fire_delay = 0.0
 	_pending_fire_side = ""
 	_try_break_away(delta)
-	return BT.Status.RUNNING
+	return _ST_RUNNING
 
 
 func limbo_tick_reposition(delta: float) -> int:
 	if not currently_repositioning:
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 	_try_reposition(delta)
-	return BT.Status.RUNNING
+	return _ST_RUNNING
 
 
 func limbo_tick_preferred(delta: float) -> int:
 	if range_band != _Evaluator.RangeBand.PREFERRED:
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 	_try_establish_broadside(delta)
-	return BT.Status.RUNNING
+	return _ST_RUNNING
 
 
 func limbo_tick_approach(delta: float) -> int:
 	if range_band != _Evaluator.RangeBand.TOO_FAR and range_band != _Evaluator.RangeBand.BEYOND_MAX:
-		return BT.Status.FAILURE
+		return _ST_FAILURE
 	_try_approach(delta)
-	return BT.Status.RUNNING
+	return _ST_RUNNING
 
 
 func limbo_tick_establish(delta: float) -> int:
 	if not _try_establish_broadside(delta):
-		return BT.Status.FAILURE
-	return BT.Status.RUNNING
+		return _ST_FAILURE
+	return _ST_RUNNING
 
 
 func limbo_tick_hold(delta: float) -> int:
 	_hold_pattern(delta)
-	return BT.Status.RUNNING
+	return _ST_RUNNING
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -373,6 +463,10 @@ func _commit_broadside_volley(best_side_str: String) -> bool:
 		fire_stbd_intent = true
 	else:
 		return false
+
+	print("[NavalBot %s] FIRE %s broadside — dist=%.0f quality=%.2f" % [
+		name, best_side_str, distance_to_target,
+		float(broadside_result.get("best_quality", 0.0))])
 
 	recently_fired = true
 	currently_repositioning = true
@@ -496,9 +590,11 @@ func _try_approach(_delta: float) -> bool:
 	if to_tgt.length_squared() < 1.0:
 		return false
 	var to_tgt_n: Vector2 = to_tgt.normalized()
-	# Apply a 15–20° offset to avoid nose chase.
+	# Stable 18° offset based on preferred_side so the approach direction
+	# doesn't flicker randomly each frame (was causing oscillation).
 	var offset: float = deg_to_rad(18.0)
-	var approach_dir: Vector2 = to_tgt_n.rotated(offset if randf() > 0.5 else -offset)
+	var side_sign: float = 1.0 if preferred_side != "port" else -1.0
+	var approach_dir: Vector2 = to_tgt_n.rotated(offset * side_sign)
 
 	var cross_val: float = ship_dir.cross(approach_dir)
 	var steer_dir: float = clampf(cross_val * 12.0, -1.0, 1.0)
@@ -514,12 +610,14 @@ func _try_approach(_delta: float) -> bool:
 func _hold_pattern(_delta: float) -> void:
 	current_bt_state = "hold"
 	last_maneuver = "circling"
-	# Gentle turn to keep moving.
 	if turn_commit_timer <= 0.0:
 		_commit_turn(1.0, 3.0)
 	_set_steer(turn_commit_direction)
 	desired_sail_state = 2  # HALF
 	fire_block_reason = "holding"
+	if debug_log_events:
+		print("[NavalBot %s] _hold_pattern: steerDir=%.1f L=%.2f R=%.2f sail=%d" % [
+			name, turn_commit_direction, steer_left, steer_right, desired_sail_state])
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -583,4 +681,6 @@ func get_debug_text() -> String:
 	if stuck_timer > 1.0:
 		lines.append("Stuck: %.1fs" % stuck_timer)
 	lines.append("Sail: %d  Steer: L%.1f R%.1f" % [desired_sail_state, steer_left, steer_right])
+	lines.append("Spd: %.1f  AngV: %.2f" % [agent.get_speed() if agent else 0.0, agent.get_angular_velocity() if agent else 0.0])
+	lines.append("BT: init=%s active=%s" % [_bt_initialised, bt_player.get("active") if bt_player else "N/A"])
 	return "\n".join(lines)

@@ -29,7 +29,7 @@ const _FRIENDS_REFRESH_INTERVAL: float = 6.0
 # Lifecycle
 # ---------------------------------------------------------------------------
 func _ready() -> void:
-	_refresh_fireteam_status()
+	_refresh_crew_status()
 	_apply_warm_tactical_theme()
 	# Set visibility BEFORE configuring navigation so focus chains reflect actual visibility.
 	start_button.visible = SteamManager.is_host
@@ -152,7 +152,7 @@ func _on_selected_game_mode_changed(mode_id: String) -> void:
 		game_mode_description_label.text = mode_desc
 	else:
 		game_mode_description_label.text = "%s\n%s" % [subtitle, mode_desc]
-	_refresh_fireteam_status()
+	_refresh_crew_status()
 	game_mode_selector.disabled = not SteamManager.is_host
 
 func _refresh_player_list(_peer_id: int) -> void:
@@ -190,7 +190,7 @@ func _refresh_player_list(_peer_id: int) -> void:
 		row.add_child(label)
 
 	var ready_counts: Dictionary = SteamManager.get_ready_counts()
-	_refresh_fireteam_status()
+	_refresh_crew_status()
 	lobby_status_label.text = "Crew: %d/%d | Ready: %d/%d" % [member_count, GameConstants.MAX_PLAYERS, int(ready_counts.get("ready", 0)), int(ready_counts.get("total", 0))]
 	ready_button.text = "Unready" if SteamManager.local_ready else "Ready"
 
@@ -210,9 +210,9 @@ func _refresh_online_friends() -> void:
 
 	var app_id: int = SteamManager.get_current_app_id()
 	if app_id > 0:
-		invite_note_label.text = "Invites appear as FireTeam MNG (App ID %d)." % app_id
+		invite_note_label.text = "Invites appear as Ironwake (App ID %d)." % app_id
 	else:
-		invite_note_label.text = "Invites appear as FireTeam MNG."
+		invite_note_label.text = "Invites appear as Ironwake."
 
 	var online_friends: Array[Dictionary] = SteamManager.get_online_friends()
 	if online_friends.is_empty():
@@ -329,10 +329,10 @@ func _create_avatar_rect(steam_id: int, avatar_size: int) -> TextureRect:
 		avatar.modulate = Color(1, 1, 1, 0.35)
 	return avatar
 
-func _refresh_fireteam_status() -> void:
+func _refresh_crew_status() -> void:
 	if lobby_id_label == null:
 		return
 	var role_text: String = "Command Lead" if SteamManager.is_host else "Operative"
 	var mode: Dictionary = GameManager.get_selected_game_mode()
 	var mode_label: String = str(mode.get("label", "Unknown Mission"))
-	lobby_id_label.text = "Fireteam Status: %s | %s" % [role_text, mode_label]
+	lobby_id_label.text = "Crew Status: %s | %s" % [role_text, mode_label]

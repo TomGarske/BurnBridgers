@@ -118,10 +118,9 @@ static func evaluate_range_band(distance: float, prev_band: int = -1) -> Diction
 	if distance < close_threshold:
 		band = RangeBand.TOO_CLOSE
 	elif distance <= pref_hi:
-		if distance >= pref_lo:
-			band = RangeBand.PREFERRED
-		else:
-			band = RangeBand.PREFERRED      # between close and pref_lo → still preferred
+		# 120–180 is a transition zone: scored lower by _compute_range_score but
+		# still classified PREFERRED so bots don't oscillate at the boundary.
+		band = RangeBand.PREFERRED
 	elif distance <= max_threshold:
 		band = RangeBand.TOO_FAR
 	else:
@@ -261,12 +260,7 @@ static func _side_quality(
 	var arc_ok: float = 1.0 if _arc_valid(dir_n, to_tgt_n, battery, is_port) else 0.0
 
 	# Weighted combination — beam alignment is dominant.
-	var raw: float = beam * 0.40 + range_s * 0.25 + stability * 0.20
-	# Speed penalty (mild).
-	var speed_pen: float = 1.0
-	if dist > 0.0:
-		speed_pen = 1.0   # already captured via stability
-	raw += speed_pen * 0.15
+	var raw: float = beam * 0.40 + range_s * 0.25 + stability * 0.20 + 0.15
 
 	# Hard gates.
 	raw *= loaded
@@ -293,9 +287,7 @@ static func _stability_score(angular_velocity: float, current_speed: float) -> f
 static func _battery_loaded(battery: Variant) -> float:
 	if battery == null:
 		return 0.0
-	var st: int = int(battery.state)
-	# Hard gate: only READY can volley (req-combat-loop §3.5, matches BatteryController.process_frame).
-	if st == 2:
+	if battery.state == battery.BatteryState.READY:
 		return 1.0
 	return 0.0
 

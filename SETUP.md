@@ -1,4 +1,4 @@
-# FireTeam MNG — Developer Setup
+# Ironwake — Developer Setup
 
 ## Prerequisites
 - [Godot Engine 4.x](https://godotengine.org/download) installed
@@ -35,7 +35,7 @@ If you prefer to install manually:
 ## 3. Create steam_appid.txt
 The setup scripts create this file automatically. It lives at the project root and contains the Steam App ID.
 
-For playtesting use the **Fireteam MNG Playtest** app ID:
+For playtesting use the **Ironwake Playtest** app ID:
 ```
 4530870
 ```

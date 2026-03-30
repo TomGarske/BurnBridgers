@@ -132,7 +132,7 @@ alignment = 1
 layout_mode = 2
 theme_override_colors/font_color = Color(0.937255, 0.964706, 1, 1)
 theme_override_font_sizes/font_size = 30
-text = "FIRETEAM MNG"
+text = "IRONWAKE"
 horizontal_alignment = 1
 
 [node name="Tagline" type="Label" parent="LeftMenuPanel/VBoxContainer" unique_id=247180099]
@@ -230,7 +230,7 @@ layout_mode = 2
 [node name="PublicLobbiesTitle" type="Label" parent="RightLobbyPanel/VBoxContainer" unique_id=1657681715]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.788235, 0.858824, 0.960784, 1)
-text = "Public FireTeam MNG Operations"
+text = "Public Ironwake Operations"
 horizontal_alignment = 1
 
 [node name="RefreshLobbiesButton" type="Button" parent="RightLobbyPanel/VBoxContainer" unique_id=1678034002]
@@ -245,7 +245,7 @@ text = "Scan Operations"
 [node name="LobbyListStatus" type="Label" parent="RightLobbyPanel/VBoxContainer" unique_id=378713310]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.678431, 0.768627, 0.898039, 0.95)
-text = "Scanning for FireTeam MNG operations..."
+text = "Scanning for Ironwake operations..."
 autowrap_mode = 2
 
 [node name="LobbyListScroll" type="ScrollContainer" parent="RightLobbyPanel/VBoxContainer" unique_id=965262630]
@@ -286,7 +286,7 @@ layout_mode = 2
 title = "Confirm Quit"
 initial_position = 1
 ok_button_text = "Yes, I quit"
-dialog_text = "Abort mission and close FireTeam MNG?
+dialog_text = "Abort mission and close Ironwake?
 
 Quit anyway?"
 

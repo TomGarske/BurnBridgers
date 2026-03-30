@@ -58,7 +58,7 @@ alignment = 1
 theme_override_constants/separation = 12
 
 [node name="LobbyIdLabel" type="Label" parent="LobbyCard/VBoxContainer"]
-text = "Fireteam Status: Standby"
+text = "Crew Status: Standby"
 horizontal_alignment = 1
 theme_override_font_sizes/font_size = 20
 theme_override_colors/font_color = Color(0.90, 0.97, 1.0, 1.0)
@@ -108,7 +108,7 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
 [node name="InviteNoteLabel" type="Label" parent="LobbyCard/VBoxContainer"]
-text = "Note: Invites appear as FireTeam MNG."
+text = "Note: Invites appear as Ironwake."
 autowrap_mode = 2
 theme_override_colors/font_color = Color(0.62, 0.56, 0.5, 1)
 
