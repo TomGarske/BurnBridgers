@@ -387,8 +387,9 @@ func _process(delta: float) -> void:
 		queue_redraw()
 		return
 
-	# Only tick and send input for the character this peer owns
-	_tick_player(_players[_my_index], delta)
+	# Only tick and send input for the character this peer owns.
+	# Use call() so derived arenas (e.g. naval Blacksite) get their overridden _tick_player / _check_hit.
+	call("_tick_player", _players[_my_index], delta)
 	_broadcast_my_state()
 	_resolve_collisions()
 	var run_authoritative_logic: bool = not multiplayer.has_multiplayer_peer() or multiplayer.is_server()
@@ -396,7 +397,7 @@ func _process(delta: float) -> void:
 		for i in range(_players.size()):
 			for j in range(_players.size()):
 				if i != j:
-					_check_hit(_players[i], _players[j])
+					call("_check_hit", _players[i], _players[j])
 		_check_win()
 	_tick_status_messages(delta)
 	queue_redraw()

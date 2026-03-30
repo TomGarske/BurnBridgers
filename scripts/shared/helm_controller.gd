@@ -1,10 +1,13 @@
 ## Mechanical helm model: wheel spools rope onto a drum → tiller → rudder.
 ## A/D input spins the wheel (angular velocity); wheel has inertia.
-## Rudder follows wheel position with lag (~7.5°/sec on a 30° max).
+## Rudder follows wheel position with lag; max deflection set by MAX_RUDDER_DEFLECTION_DEG.
 ## No auto-recenter — counter-steer to straighten out.
 ## Call process_steer() each frame with left/right strengths in [0,1].
 class_name HelmController
 extends RefCounted
+
+## Normalized rudder ±1.0 represents this many degrees port/stbd from center.
+const MAX_RUDDER_DEFLECTION_DEG: float = 45.0
 
 enum HelmState {
 	CENTER,
@@ -20,7 +23,7 @@ enum HelmState {
 var wheel_position: float = 0.0
 ## Wheel angular velocity (normalized units/sec). Persists across frames (inertia).
 var wheel_velocity: float = 0.0
-## Rudder angle: normalized -1.0 to +1.0 (±30° physical deflection).
+## Rudder angle: normalized -1.0 to +1.0 (±MAX_RUDDER_DEFLECTION_DEG physical deflection).
 var rudder_angle: float = 0.0
 
 var wheel_locked: bool = false
@@ -32,8 +35,8 @@ var wheel_spin_accel: float = 1.4
 var wheel_max_spin: float = 0.45
 ## Friction deceleration when input is released (norm/sec²).
 var wheel_friction: float = 3.0
-## Rudder chases wheel at this rate (norm/sec). 0.25 ≈ 4 sec to full deflection.
-var rudder_follow_rate: float = 0.25
+## Rudder chases wheel at this rate (norm/sec). 0.275 ≈ 3.6 sec to full deflection (+10% vs 0.25).
+var rudder_follow_rate: float = 0.275
 ## Exponential spring return toward center when no input.
 ## Rate scales with displacement: fast far from center, gentle near center.
 ## 0.3 ≈ from full lock: 50% in ~2.3s, 90% in ~7.7s, near-zero in ~13s.
@@ -144,7 +147,7 @@ func get_helm_state() -> HelmState:
 
 
 func get_rudder_label() -> String:
-	var deg: float = absf(rudder_angle) * 30.0
+	var deg: float = absf(rudder_angle) * MAX_RUDDER_DEFLECTION_DEG
 	if deg < 1.0:
 		return "Rudder mid"
 	if rudder_angle < 0.0:

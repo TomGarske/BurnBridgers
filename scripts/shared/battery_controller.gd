@@ -53,11 +53,13 @@ var reload_timer: float = 0.0
 var firing_arc_degrees: float = 50.0
 var max_range: float = 14.0
 var auto_fire_enabled: bool = false
-## Continuous cannon elevation: 0.0 = min depression (-5°), 1.0 = max elevation (+10°).
-## Neutral (flat/0°) sits at ~0.333.  Controlled by quoin wedge under the breech.
+## Continuous quoin: 0.0 → −5° depression, 1.0 → +10° elevation (linear).
+## Used directly by CannonBallistics.initial_velocity(elevation_deg).
 const ELEV_MIN_DEG: float = -5.0
 const ELEV_MAX_DEG: float = 10.0
-var cannon_elevation: float = 0.333
+## Normalized `cannon_elevation` that yields 0° horizontal bore (default for new batteries).
+const CANNON_ELEVATION_ZERO_DEG: float = (0.0 - ELEV_MIN_DEG) / (ELEV_MAX_DEG - ELEV_MIN_DEG)
+var cannon_elevation: float = CANNON_ELEVATION_ZERO_DEG
 ## How fast the gun crew can adjust the quoin per second (normalized 0–1 units).
 const ELEVATION_ADJUST_RATE: float = 0.35
 var battery_damage: float = 75.0
@@ -161,7 +163,10 @@ func _enter_firing(out: Array) -> void:
 	_transition(BatteryState.FIRING)
 	if fire_mode == FireMode.SALVO:
 		volley_fired.emit(side)
-		out.append(randf_range(-0.08, 0.08))
+		var n: int = maxi(1, cannon_count)
+		for i in range(n):
+			out.append(randf_range(-0.08, 0.08))
+			cannon_fired.emit(side, i)
 		reload_timer = reload_time
 		reload_started.emit(side)
 		_transition(BatteryState.RELOADING)
@@ -198,8 +203,7 @@ func _process_ripple(delta: float, out: Array) -> void:
 
 
 func damage_per_shot_for_current_mode() -> float:
-	if fire_mode == FireMode.SALVO:
-		return battery_damage
+	# Salvo fires all guns in one frame; ripple staggers them — same total battery_damage per volley.
 	return battery_damage / float(maxi(1, cannon_count))
 
 
@@ -249,19 +253,6 @@ func elevation_label() -> String:
 	var deg: float = elevation_degrees()
 	var sign_str: String = "+" if deg >= 0.0 else ""
 	return "%s%.1f°" % [sign_str, deg]
-
-
-## Returns a vz multiplier based on continuous cannon_elevation.
-## Realistic range: -5° (depressed, short range) to +10° (max loft).
-## -5° → mult 0.48 (range ~120u point-blank)
-##  0° → mult 1.0  (range ~250u optimal combat)
-## +5° → mult 1.4  (range ~350u)
-## +10° → mult 1.8  (range ~450u maximum)
-func elevation_vz_multiplier(_target_distance: float, _optimal_range: float, _max_range: float) -> float:
-	var deg: float = elevation_degrees()
-	if deg <= 0.0:
-		return lerpf(0.48, 1.0, (deg - ELEV_MIN_DEG) / absf(ELEV_MIN_DEG))
-	return lerpf(1.0, 1.8, deg / ELEV_MAX_DEG)
 
 
 func side_label() -> String:

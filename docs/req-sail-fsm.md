@@ -39,6 +39,12 @@ Sail level is represented as a stepped enum with three v1 states. Additional sta
 | `HALF` | `0.5` | Half sail deployed. Moderate speed. |
 | `FULL` | `1.0` | Full sail deployed. Maximum speed. |
 
+### Blacksite / naval prototype (`SailController`)
+
+The prototype `SailController` also defines **`QUARTER`** (`0.25`) between `STOP` and `HALF` for finer speed steps. That is an **implementation extension** beyond the minimal three-state table above.
+
+**Spawn default (Blacksite arena):** Player and locally spawned bots start with **`SailState.HALF`** and **`current_sail_level = 0.5`** (“half mast”) after `_init_blacksite_movement_state()` / `_init_bot_controllers()`. The AI’s default desired sail state matches **HALF** so behavior does not immediately fight the spawn state.
+
 ### Future Expansion States (out of scope for v1)
 
 - `BACK_SAIL` — reverse propulsion

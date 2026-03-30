@@ -35,8 +35,10 @@ var _prev_motion_turn: bool = false
 var _prev_motion_turn_hard: bool = false
 var _zoom_in_button: Button = null
 var _zoom_out_button: Button = null
-var _camera_pan_offset: Vector2 = Vector2.ZERO
-var _camera_locked: bool = true
+## When unlocked, viewport center tracks this world point (ship is not re-centered each frame).
+var _camera_world_anchor: Vector2 = Vector2.ZERO
+## When true, view follows local ship each frame. Default off until 1/Home/Tab.
+var _camera_locked: bool = false
 var _middle_drag_active: bool = false
 var _middle_drag_prev: Vector2 = Vector2.ZERO
 ## Reused helm clone so ship arc preview runs identical process_steer() to gameplay.
@@ -49,10 +51,10 @@ var _is_local_sim: bool = false
 
 @export_group("Local sim (req-local-sim-v1)")
 @export var local_sim_enabled: bool = true
-@export_range(1, 4, 1) var local_sim_bot_count: int = 1
+@export_range(1, 4, 1) var local_sim_bot_count: int = 3
 
 @export_group("Combat debug (req-debug-combat-v1)")
-@export var combat_debug_hud_enabled: bool = true
+@export var combat_debug_hud_enabled: bool = false  # agent state panels; F3 to expand (debug builds)
 @export var combat_debug_world_draw: bool = false
 @export var combat_debug_log: bool = false
 
@@ -65,8 +67,6 @@ const BROADSIDE_STBD_ACTION: String = "bf_broadside_stbd"
 const FIRE_MODE_ACTION: String = "bf_fire_mode"
 const AUTOFIRE_ACTION: String = "bf_autofire"
 const WHEEL_LOCK_ACTION: String = "bf_wheel_lock"
-const CHASE_BOW_ACTION: String = "bf_chase_bow"
-const CHASE_STERN_ACTION: String = "bf_chase_stern"
 const ELEV_UP_ACTION: String = "bf_elev_up"
 const ELEV_DOWN_ACTION: String = "bf_elev_down"
 ## Min dot(aim, direction_to_opponent) to treat opponent as aim target for battery range (req-battery-fsm §6).
@@ -74,16 +74,16 @@ const _BATTERY_AIM_ALIGN_DOT: float = 0.35
 
 ## Forward motion — heavy hull: low drag so speed carries (momentum).
 const MOTION_DECEL_ABOVE_TARGET: float = 0.95
-const MOTION_PASSIVE_DRAG_K: float = 0.038
+const MOTION_PASSIVE_DRAG_K: float = 0.025
 const COAST_DRAG_MULT: float = 2.0
-const MOTION_ZERO_SAIL_DRAG: float = 0.06
+const MOTION_ZERO_SAIL_DRAG: float = 0.04
 ## Rudder bleeds forward speed (scaled for naval speeds).
-const MOTION_TURNING_SPEED_LOSS: float = 0.045
-const MOTION_HARD_TURN_SPEED_LOSS: float = 0.075
+const MOTION_TURNING_SPEED_LOSS: float = 0.03
+const MOTION_HARD_TURN_SPEED_LOSS: float = 0.05
 const MOTION_HARD_TURN_RUDDER: float = 0.9
 const PROJECTILE_DAMAGE: float = 25.0
 ## Hull integrity: each cannon shell that strikes the hull removes 1 hit.
-const HULL_HITS_MAX: float = 10.0
+const HULL_HITS_MAX: float = 6.0
 const _STICK_DEADZONE: float = 0.2
 const _SPLASH_DURATION: float = 0.42
 const _HULL_STRIKE_DURATION: float = 0.4
@@ -93,6 +93,7 @@ const _MUZZLE_SMOKE_DURATION: float = 2.0
 const _METERS_PER_WORLD_UNIT: float = 1.0
 const _KNOTS_PER_METER_PER_SEC: float = 1.94384
 const _ZOOM_STEP_FINE: float = 0.02
+const RESPAWN_DELAY_SEC: float = 5.0
 
 func _load_geo_map() -> void:
 	_map_layout = MapProfile.configure_renderer(_terrain_renderer)
@@ -120,11 +121,20 @@ func _dir_screen(dx: float, dy: float) -> Vector2:
 	return v.normalized() if v.length_squared() > 0.001 else Vector2.DOWN
 
 
+## Screen position of the drawn hull (deck lift + bob) — matches visible ship, not raw wx/wy waterline.
+func _hull_visual_screen_pos(p: Dictionary) -> Vector2:
+	var sp: Vector2 = _w2s(float(p.wx), float(p.wy))
+	var bob: float = sin(float(p.get("walk_time", 0.0)) * 3.0) * 1.4 if bool(p.get("moving", false)) else 0.0
+	var v_lift_px: float = NC.SHIP_DECK_HEIGHT_UNITS * _CannonBallistics.SCREEN_HEIGHT_PX_PER_UNIT * _zoom
+	return sp + Vector2(0.0, -v_lift_px + (-2.0 + bob) * _zoom)
+
+
 func _ready() -> void:
 	super._ready()
 	_zoom = NC.NAVAL_DEFAULT_ZOOM
 	_init_blacksite_movement_state()
 	_spawn_local_sim_bot_if_needed()
+	_camera_world_anchor = MapProfile.get_default_view_focus(_map_layout)
 	_ensure_audio_player()
 	_ensure_zoom_buttons()
 
@@ -143,6 +153,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			if event.button_index == MOUSE_BUTTON_MIDDLE:
 				_middle_drag_active = true
 				_middle_drag_prev = event.position
+				if _camera_locked and not _players.is_empty():
+					var mp: Dictionary = _players[_my_index]
+					_camera_world_anchor = Vector2(float(mp.wx), float(mp.wy))
 				_camera_locked = false
 				return
 		else:
@@ -154,12 +167,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		_middle_drag_prev = event.position
 		var world_scale: float = _TD_SCALE * _zoom
 		if world_scale > 0.001:
-			_camera_pan_offset -= delta_px / world_scale
+			_camera_world_anchor -= delta_px / world_scale
 		queue_redraw()
 		return
 	if event is InputEventKey and event.pressed:
 		if event.keycode == KEY_HOME or event.keycode == KEY_TAB or event.keycode == KEY_1:
-			_camera_pan_offset = Vector2.ZERO
 			_camera_locked = true
 			queue_redraw()
 			return
@@ -181,76 +193,60 @@ func _unhandled_input(event: InputEvent) -> void:
 func _init_blacksite_movement_state() -> void:
 	for p in _players:
 		p["health"] = HULL_HITS_MAX
-		var sail = _SailController.new()
-		sail.max_speed = NC.MAX_SPEED
-		sail.sail_raise_rate = 0.22
-		sail.sail_lower_rate = 0.28
-		sail.sail_state = _SailController.SailState.QUARTER
-		sail.current_sail_level = 0.25
-		p["sail"] = sail
-		var helm = _HelmController.new()
-		helm.wheel_spin_accel = 0.7
-		helm.wheel_max_spin = 0.45
-		helm.wheel_friction = 3.0
-		helm.rudder_follow_rate = 0.25
-		p["helm"] = helm
-		p["move_speed"] = 0.0
-		p["angular_velocity"] = 0.0
-		p["aim_broadside_port"] = true
-		p["aim_dir"] = Vector2(p.dir.x, p.dir.y)
-		var motion: _MotionStateResolver = _MotionStateResolver.new()
-		motion.max_speed_ref = NC.MAX_SPEED
-		motion.idle_speed_threshold = 0.9
-		motion.accel_threshold = 1.8
-		motion.cruise_threshold = 1.5
-		motion.coast_speed_threshold = 1.2
-		motion.decel_threshold = 1.8
-		p["motion"] = motion
-		var bat_p: _BatteryController = _BatteryController.new()
-		bat_p.side = _BatteryController.BatterySide.PORT
-		bat_p.cannon_count = 8
-		bat_p.reload_time = NC.RELOAD_TIME_SEC
-		bat_p.fire_sequence_duration = 2.4
-		bat_p.battery_damage = 75.0
-		bat_p.firing_arc_degrees = NC.BROADSIDE_HALF_ARC_DEG
-		bat_p.max_range = NC.MAX_CANNON_RANGE
-		bat_p.fire_mode = _BatteryController.FireMode.RIPPLE
-		p["battery_port"] = bat_p
-		var bat_s: _BatteryController = _BatteryController.new()
-		bat_s.side = _BatteryController.BatterySide.STARBOARD
-		bat_s.cannon_count = 8
-		bat_s.reload_time = NC.RELOAD_TIME_SEC
-		bat_s.fire_sequence_duration = 2.4
-		bat_s.battery_damage = 75.0
-		bat_s.firing_arc_degrees = NC.BROADSIDE_HALF_ARC_DEG
-		bat_s.max_range = NC.MAX_CANNON_RANGE
-		bat_s.fire_mode = _BatteryController.FireMode.RIPPLE
-		p["battery_stbd"] = bat_s
-		var bat_bow: _BatteryController = _BatteryController.new()
-		bat_bow.side = _BatteryController.BatterySide.FORWARD
-		bat_bow.cannon_count = NC.CHASE_CANNON_COUNT
-		bat_bow.reload_time = NC.CHASE_RELOAD_TIME_SEC
-		bat_bow.fire_sequence_duration = 1.0
-		bat_bow.battery_damage = NC.CHASE_BATTERY_DAMAGE
-		bat_bow.firing_arc_degrees = NC.CHASE_HALF_ARC_DEG
-		bat_bow.max_range = NC.MAX_CANNON_RANGE
-		bat_bow.fire_mode = _BatteryController.FireMode.RIPPLE
-		p["battery_bow"] = bat_bow
-		var bat_stern: _BatteryController = _BatteryController.new()
-		bat_stern.side = _BatteryController.BatterySide.AFT
-		bat_stern.cannon_count = NC.CHASE_CANNON_COUNT
-		bat_stern.reload_time = NC.CHASE_RELOAD_TIME_SEC
-		bat_stern.fire_sequence_duration = 1.0
-		bat_stern.battery_damage = NC.CHASE_BATTERY_DAMAGE
-		bat_stern.firing_arc_degrees = NC.CHASE_HALF_ARC_DEG
-		bat_stern.max_range = NC.MAX_CANNON_RANGE
-		bat_stern.fire_mode = _BatteryController.FireMode.RIPPLE
-		p["battery_stern"] = bat_stern
-		p["helm_state_prev"] = -1
-		bat_p.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_p, s, ns))
-		bat_s.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_s, s, ns))
-		bat_bow.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_bow, s, ns))
-		bat_stern.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_stern, s, ns))
+		p.erase("respawn_timer")
+		_apply_naval_controllers_to_ship(p)
+
+
+## Sail/helm/batteries/motion — quarter sail deployed at max quarter speed.
+func _apply_naval_controllers_to_ship(p: Dictionary) -> void:
+	var sail := _SailController.new()
+	sail.max_speed = NC.MAX_SPEED
+	sail.sail_raise_rate = 0.22
+	sail.sail_lower_rate = 0.28
+	sail.sail_state = _SailController.SailState.QUARTER
+	sail.current_sail_level = 0.25
+	p["sail"] = sail
+	var helm := _HelmController.new()
+	helm.wheel_spin_accel = 3.0
+	helm.wheel_max_spin = 1.08
+	helm.wheel_friction = 5.1
+	helm.rudder_follow_rate = 0.78
+	p["helm"] = helm
+	p["move_speed"] = NC.QUARTER_SPEED
+	p["angular_velocity"] = 0.0
+	p["aim_broadside_port"] = true
+	p["aim_dir"] = Vector2(p.dir.x, p.dir.y)
+	var motion: _MotionStateResolver = _MotionStateResolver.new()
+	motion.max_speed_ref = NC.MAX_SPEED
+	motion.idle_speed_threshold = 1.35
+	motion.accel_threshold = 2.7
+	motion.cruise_threshold = 2.25
+	motion.coast_speed_threshold = 1.8
+	motion.decel_threshold = 2.7
+	p["motion"] = motion
+	var bat_p: _BatteryController = _BatteryController.new()
+	bat_p.side = _BatteryController.BatterySide.PORT
+	bat_p.cannon_count = 8
+	bat_p.reload_time = NC.RELOAD_TIME_SEC
+	bat_p.fire_sequence_duration = 2.4
+	bat_p.battery_damage = 75.0
+	bat_p.firing_arc_degrees = NC.BROADSIDE_HALF_ARC_DEG
+	bat_p.max_range = NC.MAX_CANNON_RANGE
+	bat_p.fire_mode = _BatteryController.FireMode.RIPPLE
+	p["battery_port"] = bat_p
+	var bat_s: _BatteryController = _BatteryController.new()
+	bat_s.side = _BatteryController.BatterySide.STARBOARD
+	bat_s.cannon_count = 8
+	bat_s.reload_time = NC.RELOAD_TIME_SEC
+	bat_s.fire_sequence_duration = 2.4
+	bat_s.battery_damage = 75.0
+	bat_s.firing_arc_degrees = NC.BROADSIDE_HALF_ARC_DEG
+	bat_s.max_range = NC.MAX_CANNON_RANGE
+	bat_s.fire_mode = _BatteryController.FireMode.RIPPLE
+	p["battery_stbd"] = bat_s
+	p["helm_state_prev"] = -1
+	bat_p.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_p, s, ns))
+	bat_s.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_s, s, ns))
 
 
 func _forward_battery_state(bat: _BatteryController, _side: _BatteryController.BatterySide, new_state: _BatteryController.BatteryState) -> void:
@@ -261,7 +257,7 @@ func _forward_battery_state(bat: _BatteryController, _side: _BatteryController.B
 #  Bot spawning & tick  (req-ai-naval-bot-v1, req-local-sim-v1)
 # ═══════════════════════════════════════════════════════════════════════
 
-## Spawn 3 bot opponents for local sim testing (no multiplayer peer present).
+## Spawn local-sim bots (default 3) on a square around the player (no multiplayer peer).
 ## Removes the dummy P2 that the base class creates in offline mode.
 func _spawn_local_sim_bot_if_needed() -> void:
 	_is_local_sim = not multiplayer.has_multiplayer_peer()
@@ -292,11 +288,13 @@ func _spawn_local_sim_bot_if_needed() -> void:
 
 		# Create the BotShipAgent wrapper and NavalBotController.
 		var agent := BotShipAgent.new()
+		agent.name = "BotShipAgent_%d" % bot_i
 		agent.ship_dict = p
 		add_child(agent)
 		_bot_agents.append(agent)
 
 		var controller := _NavalBotController.new()
+		controller.name = "NavalBot_%d" % bot_i
 		controller.agent = agent
 		controller.target_dict = player_dict
 		controller.debug_log_events = combat_debug_log
@@ -310,55 +308,8 @@ func _spawn_local_sim_bot_if_needed() -> void:
 ## Set up sail, helm, batteries, and motion resolver on a bot dictionary entry.
 func _init_bot_controllers(p: Dictionary) -> void:
 	p["health"] = HULL_HITS_MAX
-	var sail := _SailController.new()
-	sail.max_speed = NC.MAX_SPEED
-	sail.sail_raise_rate = 0.22
-	sail.sail_lower_rate = 0.28
-	sail.sail_state = _SailController.SailState.QUARTER
-	sail.current_sail_level = 0.25
-	p["sail"] = sail
-	var helm := _HelmController.new()
-	helm.wheel_spin_accel = 0.7
-	helm.wheel_max_spin = 0.45
-	helm.wheel_friction = 3.0
-	helm.rudder_follow_rate = 0.25
-	p["helm"] = helm
-	p["move_speed"] = 0.0
-	p["angular_velocity"] = 0.0
-	p["aim_broadside_port"] = true
-	p["aim_dir"] = Vector2(p.dir.x, p.dir.y)
-	var motion := _MotionStateResolver.new()
-	motion.max_speed_ref = NC.MAX_SPEED
-	motion.idle_speed_threshold = 0.9
-	motion.accel_threshold = 1.8
-	motion.cruise_threshold = 1.5
-	motion.coast_speed_threshold = 1.2
-	motion.decel_threshold = 1.8
-	p["motion"] = motion
-	# Port + starboard batteries only — bots don't use chase guns.
-	var bat_p := _BatteryController.new()
-	bat_p.side = _BatteryController.BatterySide.PORT
-	bat_p.cannon_count = 8
-	bat_p.reload_time = NC.RELOAD_TIME_SEC
-	bat_p.fire_sequence_duration = 2.4
-	bat_p.battery_damage = 75.0
-	bat_p.firing_arc_degrees = NC.BROADSIDE_HALF_ARC_DEG
-	bat_p.max_range = NC.MAX_CANNON_RANGE
-	bat_p.fire_mode = _BatteryController.FireMode.RIPPLE
-	p["battery_port"] = bat_p
-	var bat_s := _BatteryController.new()
-	bat_s.side = _BatteryController.BatterySide.STARBOARD
-	bat_s.cannon_count = 8
-	bat_s.reload_time = NC.RELOAD_TIME_SEC
-	bat_s.fire_sequence_duration = 2.4
-	bat_s.battery_damage = 75.0
-	bat_s.firing_arc_degrees = NC.BROADSIDE_HALF_ARC_DEG
-	bat_s.max_range = NC.MAX_CANNON_RANGE
-	bat_s.fire_mode = _BatteryController.FireMode.RIPPLE
-	p["battery_stbd"] = bat_s
-	p["helm_state_prev"] = -1
-	bat_p.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_p, s, ns))
-	bat_s.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_s, s, ns))
+	p.erase("respawn_timer")
+	_apply_naval_controllers_to_ship(p)
 
 
 ## Find the bot controller for a given _players index.
@@ -410,7 +361,9 @@ func _tick_bot(p: Dictionary, player_idx: int, delta: float) -> void:
 	var spd_for_turn: float = float(p.get("move_speed", 0.0))
 	var turn_deg: float = NC.turn_rate_deg_for_speed(spd_for_turn)
 	var max_turn_rad: float = deg_to_rad(turn_deg)
-	var steer_auth: float = clampf(spd_for_turn / 5.5, 0.0, 1.0)
+	# Bots often start at 0 speed while the BT tries to align; player steer_auth would stay ~0 and
+	# they never yaw. Floor keeps rudder effective until move_speed builds.
+	var steer_auth: float = maxf(0.78, clampf(spd_for_turn / 8.25, 0.0, 1.0))
 	var target_av: float = max_turn_rad * helm.rudder_angle * steer_auth
 	var tau: float = NC.HELM_TURN_LAG_SEC
 	ang_vel = lerpf(ang_vel, target_av, 1.0 - exp(-delta / tau))
@@ -563,8 +516,8 @@ func _register_inputs() -> void:
 	_set_action_keys(_ACTIONS.atk, [KEY_F])
 	_ensure_joy_button_for_action(_ACTIONS.atk, JOY_BUTTON_X)
 
-	_set_action_keys(BROADSIDE_PORT_ACTION, [KEY_Q, KEY_LEFT])
-	_set_action_keys(BROADSIDE_STBD_ACTION, [KEY_E, KEY_RIGHT])
+	_set_action_keys(BROADSIDE_PORT_ACTION, [KEY_E, KEY_LEFT])
+	_set_action_keys(BROADSIDE_STBD_ACTION, [KEY_Q, KEY_RIGHT])
 	_ensure_joy_button_for_action(BROADSIDE_PORT_ACTION, JOY_BUTTON_LEFT_SHOULDER)
 	_ensure_joy_button_for_action(BROADSIDE_STBD_ACTION, JOY_BUTTON_RIGHT_SHOULDER)
 
@@ -614,7 +567,7 @@ func _set_action_mouse_buttons(action: String, buttons: Array[MouseButton]) -> v
 		ev.button_index = button_index
 		InputMap.action_add_event(action, ev)
 
-const _CAM_PAN_SPEED: float = 600.0
+const _CAM_PAN_SPEED: float = 900.0
 
 func _process(delta: float) -> void:
 	super._process(delta)
@@ -626,6 +579,7 @@ func _process(delta: float) -> void:
 	_tick_hull_strike_fx(delta)
 	_tick_muzzle_fx(delta)
 	_tick_local_timers(delta)
+	_tick_respawn(delta)
 	var pan_dir := Vector2.ZERO
 	if Input.is_key_pressed(KEY_UP):
 		pan_dir.y -= 1.0
@@ -636,10 +590,13 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_RIGHT):
 		pan_dir.x += 1.0
 	if pan_dir.length_squared() > 0.001:
+		if _camera_locked and not _players.is_empty():
+			var ap: Dictionary = _players[_my_index]
+			_camera_world_anchor = Vector2(float(ap.wx), float(ap.wy))
 		_camera_locked = false
 		var world_scale: float = _TD_SCALE * _zoom
 		if world_scale > 0.001:
-			_camera_pan_offset += pan_dir.normalized() * _CAM_PAN_SPEED * delta / world_scale
+			_camera_world_anchor += pan_dir.normalized() * _CAM_PAN_SPEED * delta / world_scale
 	queue_redraw()
 
 func _steer_strengths(pad_id: int) -> Vector2:
@@ -690,7 +647,7 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 	var spd_for_turn: float = float(p.get("move_speed", 0.0))
 	var turn_deg: float = NC.turn_rate_deg_for_speed(spd_for_turn)
 	var max_turn_rad: float = deg_to_rad(turn_deg)
-	var steer_auth: float = clampf(spd_for_turn / 5.5, 0.0, 1.0)
+	var steer_auth: float = clampf(spd_for_turn / 8.25, 0.0, 1.0)
 	var target_av: float = max_turn_rad * helm.rudder_angle * steer_auth
 	var tau: float = NC.HELM_TURN_LAG_SEC
 	ang_vel = lerpf(ang_vel, target_av, 1.0 - exp(-delta / tau))
@@ -715,10 +672,10 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 	var elev_down: bool = Input.is_action_pressed(ELEV_DOWN_ACTION)
 	if elev_up or elev_down:
 		var elev_dir: float = 1.0 if elev_up else -1.0
-		for bat_key in ["battery_port", "battery_stbd", "battery_bow", "battery_stern"]:
-			var bat: Variant = p.get(bat_key)
-			if bat != null:
-				bat.adjust_elevation(delta, elev_dir)
+		var sel_elev_key: String = "battery_port" if bool(p.get("aim_broadside_port", true)) else "battery_stbd"
+		var elev_bat: Variant = p.get(sel_elev_key)
+		if elev_bat != null:
+			elev_bat.adjust_elevation(delta, elev_dir)
 
 	var sail = p.get("sail")
 	if sail == null:
@@ -832,8 +789,6 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 	var ship_pos := Vector2(float(p.wx), float(p.wy))
 	var port_b = port_bat
 	var stbd_b = stbd_bat
-	var bow_b: Variant = p.get("battery_bow")
-	var stern_b: Variant = p.get("battery_stern")
 	var max_bat_range: float = NC.MAX_CANNON_RANGE
 	if port_b != null:
 		max_bat_range = maxf(max_bat_range, port_b.max_range)
@@ -842,28 +797,19 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 	var target_dist_m: float = _battery_target_distance_m(p, aim_n, max_bat_range)
 	p["_naval_acc_dist"] = target_dist_m
 	p["_naval_spd"] = spd
-	var bow_aim: Vector2 = hull_n
-	var stern_aim: Vector2 = -hull_n
-	var bow_dist: float = _battery_target_distance_m(p, bow_aim, NC.MAX_CANNON_RANGE)
-	var stern_dist: float = _battery_target_distance_m(p, stern_aim, NC.MAX_CANNON_RANGE)
+	var fire_port_battery: bool = bool(p.get("aim_broadside_port", true))
 	var fired_any: bool = false
 	if port_b != null:
 		var port_aim: Vector2 = hull_n.rotated(PI * 0.5)
-		for spread in port_b.process_frame(delta, hull_n, port_aim, ship_pos, fire_just_pressed, target_dist_m):
+		var port_fire: bool = fire_just_pressed and fire_port_battery
+		for spread in port_b.process_frame(delta, hull_n, port_aim, ship_pos, port_fire, target_dist_m):
 			_fire_projectile(p, spread, port_b.damage_per_shot_for_current_mode(), port_aim, port_b)
 			fired_any = true
 	if stbd_b != null:
 		var stbd_aim: Vector2 = hull_n.rotated(-PI * 0.5)
-		for spread in stbd_b.process_frame(delta, hull_n, stbd_aim, ship_pos, fire_just_pressed, target_dist_m):
+		var stbd_fire: bool = fire_just_pressed and not fire_port_battery
+		for spread in stbd_b.process_frame(delta, hull_n, stbd_aim, ship_pos, stbd_fire, target_dist_m):
 			_fire_projectile(p, spread, stbd_b.damage_per_shot_for_current_mode(), stbd_aim, stbd_b)
-			fired_any = true
-	if bow_b != null:
-		for spread in bow_b.process_frame(delta, hull_n, bow_aim, ship_pos, fire_just_pressed, bow_dist):
-			_fire_projectile(p, spread, bow_b.damage_per_shot_for_current_mode(), bow_aim, bow_b)
-			fired_any = true
-	if stern_b != null:
-		for spread in stern_b.process_frame(delta, hull_n, stern_aim, ship_pos, fire_just_pressed, stern_dist):
-			_fire_projectile(p, spread, stern_b.damage_per_shot_for_current_mode(), stern_aim, stern_b)
 			fired_any = true
 
 	if fired_any:
@@ -1033,7 +979,10 @@ func _fire_projectile(p: Dictionary, spread_bias: float = 0.0, shot_damage: floa
 	var start_y: float = float(p.wy) + shot_dir.y * muzzle
 	_spawn_muzzle_fx(start_x, start_y, shot_dir)
 	var mass: float = _CannonBallistics.mass_from_damage(shot_damage)
-	var vel: Dictionary = _CannonBallistics.initial_velocity(shot_dir, mass, NC.CANNON_LINE_SPEED_SCALE)
+	var elev_deg: float = _CannonBallistics.DEFAULT_ELEVATION_DEG
+	if battery != null:
+		elev_deg = battery.elevation_degrees()
+	var vel: Dictionary = _CannonBallistics.initial_velocity(shot_dir, mass, NC.CANNON_LINE_SPEED_SCALE, elev_deg)
 	var vx: float = float(vel.vx)
 	var vy: float = float(vel.vy)
 	var vz: float = float(vel.vz)
@@ -1044,9 +993,6 @@ func _fire_projectile(p: Dictionary, spread_bias: float = 0.0, shot_damage: floa
 		vx *= s
 		vy *= s
 		vz *= s
-	if battery != null:
-		var elev_mult: float = battery.elevation_vz_multiplier(aim_dist, NC.OPTIMAL_RANGE, NC.MAX_CANNON_RANGE)
-		vz *= elev_mult
 	if multiplayer.has_multiplayer_peer():
 		_spawn_cannonball_rpc.rpc(
 			start_x,
@@ -1348,6 +1294,12 @@ func _apply_cannon_hit_impl(attacker_peer_id: int, defender_peer_id: int, _damag
 	var defender_alive: bool = new_health > 0.0
 	d.health = new_health
 	d.alive = defender_alive
+	if not defender_alive:
+		d["respawn_timer"] = RESPAWN_DELAY_SEC
+	if bool(d.get("is_bot", false)):
+		var bc: Variant = _get_bot_controller_for_index(defender_idx)
+		if bc != null:
+			bc.notify_cannon_hit(attacker_peer_id)
 	_play_cannon_hit_sound()
 	if not multiplayer.has_multiplayer_peer() or multiplayer.is_server():
 		_check_win()
@@ -1358,6 +1310,43 @@ func _apply_cannon_hit(attacker_peer_id: int, defender_peer_id: int, damage: flo
 	_apply_cannon_hit_impl(attacker_peer_id, defender_peer_id, damage)
 
 func _tick_local_timers(_delta: float) -> void:
+	pass
+
+
+func _tick_respawn(delta: float) -> void:
+	for i in range(_players.size()):
+		var p: Dictionary = _players[i]
+		if bool(p.get("alive", true)):
+			continue
+		var t: float = float(p.get("respawn_timer", 0.0))
+		if t <= 0.0:
+			continue
+		t = maxf(0.0, t - delta)
+		p["respawn_timer"] = t
+		if t <= 0.0:
+			_respawn_ship(i)
+
+
+func _respawn_ship(idx: int) -> void:
+	if idx < 0 or idx >= _players.size():
+		return
+	var p: Dictionary = _players[idx]
+	var nsp: int = maxi(_SPAWNS.size(), 1)
+	var sp: Vector2 = _SPAWNS[idx % nsp]
+	p.wx = sp.x
+	p.wy = sp.y
+	p.alive = true
+	p.health = HULL_HITS_MAX
+	p.erase("respawn_timer")
+	p["hit_landed"] = false
+	p["atk_time"] = 0.0
+	p["walk_time"] = 0.0
+	p["moving"] = false
+	_apply_naval_controllers_to_ship(p)
+
+
+## Naval sandbox: deaths respawn — do not end the match on last standing ship.
+func _check_win() -> void:
 	pass
 
 func _ensure_audio_player() -> void:
@@ -1426,17 +1415,16 @@ func _play_tone(freq_hz: float, duration_sec: float, volume: float) -> void:
 
 func _draw_player(p: Dictionary) -> void:
 	var sp: Vector2 = _w2s(p.wx, p.wy)
+	var draw_pos: Vector2 = _hull_visual_screen_pos(p)
 	if not bool(p.get("alive", true)):
-		# Sunken wreck marker.
-		draw_line(sp + Vector2(-14.0, -6.0) * _zoom, sp + Vector2(14.0, 6.0) * _zoom, Color(0.38, 0.24, 0.10, 0.85), 4.0 * _zoom)
-		draw_line(sp + Vector2(14.0, -6.0) * _zoom, sp + Vector2(-14.0, 6.0) * _zoom, Color(0.38, 0.24, 0.10, 0.85), 4.0 * _zoom)
+		# Sunken wreck marker — same deck anchor as the living hull.
+		draw_line(draw_pos + Vector2(-14.0, -6.0) * _zoom, draw_pos + Vector2(14.0, 6.0) * _zoom, Color(0.38, 0.24, 0.10, 0.85), 4.0 * _zoom)
+		draw_line(draw_pos + Vector2(14.0, -6.0) * _zoom, draw_pos + Vector2(-14.0, 6.0) * _zoom, Color(0.38, 0.24, 0.10, 0.85), 4.0 * _zoom)
 		return
 	var hull := Vector2(float(p.dir.x), float(p.dir.y))
 	if hull.length_squared() < 0.0001:
 		hull = Vector2.RIGHT
 	hull = hull.normalized()
-	var bob: float = sin(float(p.get("walk_time", 0.0)) * 3.0) * 1.4 if bool(p.get("moving", false)) else 0.0
-	var draw_pos: Vector2 = sp + Vector2(0.0, -2.0 + bob) * _zoom
 	var fwd: Vector2 = _dir_screen(hull.x, hull.y)
 	var right: Vector2 = Vector2(-fwd.y, fwd.x)
 	var px_len: float = maxf(14.0 * _zoom, (_w2s(p.wx + hull.x * NC.SHIP_LENGTH_UNITS, p.wy + hull.y * NC.SHIP_LENGTH_UNITS) - sp).length() * 0.55)
@@ -1451,7 +1439,7 @@ func _draw_player(p: Dictionary) -> void:
 	draw_polyline(PackedVector2Array([nose, tail_l, notch, tail_r, nose]), edge_col, 2.0 * _zoom, true)
 	draw_circle(draw_pos + Vector2(0.0, 12.0 * _zoom), 4.0 * _zoom, mod_color)
 	var font := ThemeDB.fallback_font
-	draw_string(font, sp + Vector2(0.0, -54.0), str(p.get("label", "Ship")), HORIZONTAL_ALIGNMENT_CENTER, -1, 12, Color(1.0, 1.0, 1.0, 0.88))
+	draw_string(font, draw_pos + Vector2(0.0, -42.0 * _zoom), str(p.get("label", "Ship")), HORIZONTAL_ALIGNMENT_CENTER, -1, 12, Color(1.0, 1.0, 1.0, 0.88))
 
 	if _players.is_empty():
 		return
@@ -1460,25 +1448,14 @@ func _draw_player(p: Dictionary) -> void:
 	var L: float = 70.0 * _zoom
 	var c_arc: Color = Color(0.42, 0.86, 0.52, 0.36)
 	var c_bow: Color = Color(0.92, 0.78, 0.42, 0.45)
-	var c_chase: Color = Color(0.42, 0.72, 0.96, 0.32)
 	for sgn in [-1.0, 1.0]:
 		var perp: Vector2 = hull.rotated(sgn * PI * 0.5)
 		var half: float = deg_to_rad(NC.BROADSIDE_HALF_ARC_DEG)
 		var a0: Vector2 = perp.rotated(-half)
 		var a1: Vector2 = perp.rotated(half)
-		draw_line(sp, sp + _dir_screen(a0.x, a0.y) * L, c_arc, 2.0 * _zoom)
-		draw_line(sp, sp + _dir_screen(a1.x, a1.y) * L, c_arc, 2.0 * _zoom)
-	var chase_half: float = deg_to_rad(NC.CHASE_HALF_ARC_DEG)
-	var bow_l: Vector2 = hull.rotated(-chase_half)
-	var bow_r: Vector2 = hull.rotated(chase_half)
-	draw_line(sp, sp + _dir_screen(bow_l.x, bow_l.y) * L * 0.65, c_chase, 1.8 * _zoom)
-	draw_line(sp, sp + _dir_screen(bow_r.x, bow_r.y) * L * 0.65, c_chase, 1.8 * _zoom)
-	var stern: Vector2 = -hull
-	var stern_l: Vector2 = stern.rotated(-chase_half)
-	var stern_r: Vector2 = stern.rotated(chase_half)
-	draw_line(sp, sp + _dir_screen(stern_l.x, stern_l.y) * L * 0.55, c_chase, 1.5 * _zoom)
-	draw_line(sp, sp + _dir_screen(stern_r.x, stern_r.y) * L * 0.55, c_chase, 1.5 * _zoom)
-	draw_line(sp, sp + _dir_screen(hull.x, hull.y) * (32.0 * _zoom), c_bow, 2.2 * _zoom)
+		draw_line(draw_pos, draw_pos + _dir_screen(a0.x, a0.y) * L, c_arc, 2.0 * _zoom)
+		draw_line(draw_pos, draw_pos + _dir_screen(a1.x, a1.y) * L, c_arc, 2.0 * _zoom)
+	draw_line(draw_pos, draw_pos + _dir_screen(hull.x, hull.y) * (32.0 * _zoom), c_bow, 2.2 * _zoom)
 
 
 func _draw_hud(vp: Vector2) -> void:
@@ -1514,12 +1491,16 @@ func _draw_hud(vp: Vector2) -> void:
 		if p.alive and fill > 0.0:
 			draw_rect(Rect2(bx, by, fill, bar_h), col)
 		draw_rect(Rect2(bx, by, bar_w, bar_h), _HUD_BORDER, false, 1.5)
-		draw_string(font, Vector2(bx + 5.0, by + bar_h - 5.0),
-				"%s  %d/%d" % [p.label, int(maxf(p.health, 0.0)), int(HULL_HITS_MAX)],
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, _HUD_TEXT)
+		var bar_txt: String
+		if p.alive:
+			bar_txt = "%s  %d/%d" % [p.label, int(maxf(p.health, 0.0)), int(HULL_HITS_MAX)]
+		else:
+			var rt: float = float(p.get("respawn_timer", 0.0))
+			bar_txt = "%s  respawn %.1fs" % [p.label, rt] if rt > 0.001 else "%s  —" % p.label
+		draw_string(font, Vector2(bx + 5.0, by + bar_h - 5.0), bar_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, _HUD_TEXT)
 
 
-func _draw_world_range_ring(center: Vector2, range_units: float, color: Color, width: float = 1.6) -> void:
+func _draw_world_range_ring(center: Vector2, range_units: float, color: Color, width: float = 1.6, screen_y_offset_px: float = 0.0) -> void:
 	var points: PackedVector2Array = PackedVector2Array()
 	var segs: int = 96
 	for i in range(segs + 1):
@@ -1527,7 +1508,7 @@ func _draw_world_range_ring(center: Vector2, range_units: float, color: Color, w
 		var ang: float = t * TAU
 		var wx: float = center.x + cos(ang) * range_units
 		var wy: float = center.y + sin(ang) * range_units
-		points.append(_w2s(wx, wy))
+		points.append(_w2s(wx, wy) + Vector2(0.0, screen_y_offset_px))
 	draw_polyline(points, color, width * _zoom, true)
 
 
@@ -1568,7 +1549,7 @@ func _draw_top_down_ocean(vp: Vector2) -> void:
 		gy += grid_spacing
 
 
-func _draw_accuracy_bands(center: Vector2) -> void:
+func _draw_accuracy_bands(center: Vector2, screen_y_offset_px: float = 0.0) -> void:
 	var bands: Array[Dictionary] = [
 		{"r0": 0.0, "r1": NC.ACC_PISTOL_RANGE, "col": Color(0.1, 0.95, 0.2, 0.06), "label": "90%"},
 		{"r0": NC.ACC_PISTOL_RANGE, "r1": NC.ACC_CLOSE_RANGE, "col": Color(0.3, 0.9, 0.15, 0.05), "label": "75%"},
@@ -1586,39 +1567,44 @@ func _draw_accuracy_bands(center: Vector2) -> void:
 			var ang: float = float(i) / float(segs) * TAU
 			var wx_in: float = center.x + cos(ang) * inner_r
 			var wy_in: float = center.y + sin(ang) * inner_r
-			verts.append(_w2s(wx_in, wy_in))
+			verts.append(_w2s(wx_in, wy_in) + Vector2(0.0, screen_y_offset_px))
 		for i in range(segs, -1, -1):
 			var ang: float = float(i) / float(segs) * TAU
 			var wx_out: float = center.x + cos(ang) * outer_r
 			var wy_out: float = center.y + sin(ang) * outer_r
-			verts.append(_w2s(wx_out, wy_out))
+			verts.append(_w2s(wx_out, wy_out) + Vector2(0.0, screen_y_offset_px))
 		if verts.size() >= 3:
 			draw_colored_polygon(verts, col)
-		_draw_world_range_ring(center, outer_r, col * 2.5, 1.2)
+		_draw_world_range_ring(center, outer_r, col * 2.5, 1.2, screen_y_offset_px)
 	var label_ang: float = -PI * 0.25
 	var label_font_size: int = int(maxf(9.0, 11.0 * _zoom))
 	for band in bands:
 		var r_mid: float = (float(band.r0) + float(band.r1)) * 0.5
 		var lx: float = center.x + cos(label_ang) * r_mid
 		var ly: float = center.y + sin(label_ang) * r_mid
-		var sp: Vector2 = _w2s(lx, ly)
+		var sp: Vector2 = _w2s(lx, ly) + Vector2(0.0, screen_y_offset_px)
 		draw_string(ThemeDB.fallback_font, sp, String(band.label),
 			HORIZONTAL_ALIGNMENT_CENTER, -1, label_font_size, Color(1, 1, 1, 0.55))
 
 
 func _draw() -> void:
 	var vp := get_viewport_rect().size
-	var me: Dictionary = _players[_my_index]
-	var cam_focus: Vector2 = Vector2(me.wx, me.wy)
-	if not _camera_locked:
-		cam_focus += _camera_pan_offset
+	var me: Dictionary = _players[_my_index] if not _players.is_empty() else {}
+	var cam_focus: Vector2
+	if _camera_locked and not me.is_empty():
+		cam_focus = Vector2(float(me.wx), float(me.wy))
+	else:
+		cam_focus = _camera_world_anchor
 	_origin = vp * 0.5 - cam_focus * _TD_SCALE * _zoom
 
 	draw_rect(Rect2(Vector2.ZERO, vp), MapProfile.SEA_SKY)
 	_draw_top_down_ocean(vp)
-	var me_world: Vector2 = Vector2(float(me.wx), float(me.wy))
-	_draw_accuracy_bands(me_world)
-	_draw_world_range_ring(me_world, NC.MAX_CANNON_RANGE, Color(1.0, 0.25, 0.1, 0.7), 2.4)
+	var me_deck_y_off: float = 0.0
+	if not me.is_empty() and bool(me.get("alive", true)):
+		me_deck_y_off = -NC.SHIP_DECK_HEIGHT_UNITS * _CannonBallistics.SCREEN_HEIGHT_PX_PER_UNIT * _zoom
+	var me_world: Vector2 = Vector2(float(me.wx), float(me.wy)) if not me.is_empty() else cam_focus
+	_draw_accuracy_bands(me_world, me_deck_y_off)
+	_draw_world_range_ring(me_world, NC.MAX_CANNON_RANGE, Color(1.0, 0.25, 0.1, 0.7), 2.4, me_deck_y_off)
 	_draw_splash_fx()
 
 	var sorted := _players.duplicate()
@@ -1695,6 +1681,48 @@ func _draw_combat_debug_world_overlays() -> void:
 	_draw_world_range_ring(tpos, NavalCombatEvaluator.BAND_MAX_PRACTICAL, Color(0.75, 0.35, 1.0, 0.42), 1.4)
 
 
+## Off-screen arrows aim at the **drawn** hull (deck lift), not waterline wx/wy.
+func _draw_offscreen_indicators(vp: Vector2) -> void:
+	const EDGE_PAD := 30.0
+	const ARROW_R := 12.0
+	var font: Font = ThemeDB.fallback_font
+	var screen_center: Vector2 = vp * 0.5
+	for p in _players:
+		if not p.alive:
+			continue
+		var sp: Vector2 = _hull_visual_screen_pos(p)
+		if sp.x >= EDGE_PAD and sp.x <= vp.x - EDGE_PAD \
+				and sp.y >= EDGE_PAD and sp.y <= vp.y - EDGE_PAD:
+			continue
+		var dir: Vector2 = (sp - screen_center).normalized()
+		var t_x: float = INF
+		var t_y: float = INF
+		if absf(dir.x) > 0.0001:
+			var tx0: float = (EDGE_PAD - screen_center.x) / dir.x
+			var tx1: float = (vp.x - EDGE_PAD - screen_center.x) / dir.x
+			t_x = tx1 if dir.x > 0.0 else tx0
+		if absf(dir.y) > 0.0001:
+			var ty0: float = (EDGE_PAD - screen_center.y) / dir.y
+			var ty1: float = (vp.y - EDGE_PAD - screen_center.y) / dir.y
+			t_y = ty1 if dir.y > 0.0 else ty0
+		var t: float = minf(t_x, t_y)
+		var ap: Vector2 = screen_center + dir * t
+		var pa: Color = p.palette[0]
+		var tip: Vector2 = ap + dir * ARROW_R
+		var perp: Vector2 = Vector2(-dir.y, dir.x) * ARROW_R * 0.6
+		var base1: Vector2 = ap - dir * (ARROW_R * 0.4) + perp
+		var base2: Vector2 = ap - dir * (ARROW_R * 0.4) - perp
+		const S := 1.18
+		var stip: Vector2 = ap + dir * ARROW_R * S
+		var sperp: Vector2 = Vector2(-dir.y, dir.x) * ARROW_R * 0.6 * S
+		var sbase1: Vector2 = ap - dir * (ARROW_R * 0.4 * S) + sperp
+		var sbase2: Vector2 = ap - dir * (ARROW_R * 0.4 * S) - sperp
+		draw_colored_polygon(PackedVector2Array([stip, sbase1, sbase2]), Color(0.0, 0.0, 0.0, 0.55))
+		draw_colored_polygon(PackedVector2Array([tip, base1, base2]), pa)
+		var label_pos: Vector2 = ap - dir * (ARROW_R + 10.0)
+		draw_string(font, label_pos, p.label, HORIZONTAL_ALIGNMENT_CENTER, -1, 8, Color(pa.r, pa.g, pa.b, 0.90))
+
+
 func _draw_bot_debug_hud(vp: Vector2) -> void:
 	if not OS.is_debug_build():
 		return
@@ -1764,16 +1792,11 @@ func _draw_trajectory_arc_preview() -> void:
 	var batteries: Array[Dictionary] = []
 	var port_b: Variant = p.get("battery_port")
 	var stbd_b: Variant = p.get("battery_stbd")
-	var bow_b: Variant = p.get("battery_bow")
-	var stern_b: Variant = p.get("battery_stern")
-	if port_b != null:
+	var sel_port_arc: bool = bool(p.get("aim_broadside_port", true))
+	if port_b != null and sel_port_arc:
 		batteries.append({"bat": port_b, "aim": hull_n.rotated(PI * 0.5), "col": Color(1.0, 0.28, 0.22, 0.82)})
-	if stbd_b != null:
+	if stbd_b != null and not sel_port_arc:
 		batteries.append({"bat": stbd_b, "aim": hull_n.rotated(-PI * 0.5), "col": Color(1.0, 0.45, 0.18, 0.82)})
-	if bow_b != null:
-		batteries.append({"bat": bow_b, "aim": hull_n, "col": Color(0.3, 0.85, 1.0, 0.75)})
-	if stern_b != null:
-		batteries.append({"bat": stern_b, "aim": -hull_n, "col": Color(0.7, 0.45, 1.0, 0.75)})
 	for bd in batteries:
 		_draw_single_battery_arc(p, bd.aim, bd.bat, bd.col)
 
@@ -1784,10 +1807,10 @@ func _draw_single_battery_arc(p: Dictionary, aim_dir: Vector2, bat: _BatteryCont
 	var est_range: float = NC.OPTIMAL_RANGE
 	var spread_deg: float = NC.spread_deg_for_range(est_range)
 	var dirs: Array[Vector2] = [aim_dir, aim_dir.rotated(deg_to_rad(spread_deg)), aim_dir.rotated(deg_to_rad(-spread_deg))]
-	var elev_mult: float = bat.elevation_vz_multiplier(est_range, NC.OPTIMAL_RANGE, NC.MAX_CANNON_RANGE)
+	var elev_deg_arc: float = bat.elevation_degrees()
 	for idx in range(dirs.size()):
 		var d: Vector2 = dirs[idx].normalized()
-		var vel: Dictionary = _CannonBallistics.initial_velocity(d, mass, NC.CANNON_LINE_SPEED_SCALE)
+		var vel: Dictionary = _CannonBallistics.initial_velocity(d, mass, NC.CANNON_LINE_SPEED_SCALE, elev_deg_arc)
 		var vx: float = float(vel.vx)
 		var vy: float = float(vel.vy)
 		var vz: float = float(vel.vz)
@@ -1798,7 +1821,6 @@ func _draw_single_battery_arc(p: Dictionary, aim_dir: Vector2, bat: _BatteryCont
 			vx *= s
 			vy *= s
 			vz *= s
-		vz *= elev_mult
 		var muzzle: float = 6.5
 		var wx0: float = float(p.wx) + d.x * muzzle
 		var wy0: float = float(p.wy) + d.y * muzzle
@@ -1890,7 +1912,7 @@ func _draw_ship_trajectory_arc_preview() -> void:
 		# Turning (uses pre-drag speed, matching _tick_player).
 		var turn_deg: float = NC.turn_rate_deg_for_speed(spd_for_turn)
 		var max_turn_rad: float = deg_to_rad(turn_deg)
-		var steer_auth: float = clampf(spd_for_turn / 5.5, 0.0, 1.0)
+		var steer_auth: float = clampf(spd_for_turn / 8.25, 0.0, 1.0)
 		var target_av: float = max_turn_rad * rudder * steer_auth
 		ang_vel = lerpf(ang_vel, target_av, 1.0 - exp(-dt_step / tau))
 		hull = hull.rotated(ang_vel * dt_step).normalized()
@@ -1923,7 +1945,7 @@ func _draw_ship_trajectory_arc_preview() -> void:
 		draw_circle(points[i], 1.7, Color(0.62, 0.95, 1.0, a))
 
 
-func _draw_motion_battery_hud(vp: Vector2) -> void:
+func _draw_motion_battery_hud(_vp: Vector2) -> void:
 	if _players.is_empty():
 		return
 	var p: Dictionary = _players[_my_index]
@@ -1964,19 +1986,21 @@ func _draw_motion_battery_hud(vp: Vector2) -> void:
 	draw_string(font, Vector2(x, y + 88.0), "Speed %.2f / %.1f" % [spd, cap], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, dim)
 
 	var bat_y: float = y + 108.0
-	draw_string(font, Vector2(x, bat_y), "Batteries", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, sub)
-	_draw_battery_row(font, x, bat_y + 16.0, panel_w, p.get("battery_port"), txt, sub, dim)
-	_draw_battery_row(font, x, bat_y + 44.0, panel_w, p.get("battery_stbd"), txt, sub, dim)
-	_draw_battery_row(font, x, bat_y + 72.0, panel_w, p.get("battery_bow"), txt, sub, dim)
-	_draw_battery_row(font, x, bat_y + 100.0, panel_w, p.get("battery_stern"), txt, sub, dim)
+	var sel_fire_port: bool = bool(p.get("aim_broadside_port", true))
+	var fire_sel: String = "Port (E/LB)" if sel_fire_port else "Starboard (Q/RB)"
+	draw_string(font, Vector2(x, bat_y), "Fire battery: %s · F/RT" % fire_sel, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, sub)
+	draw_string(font, Vector2(x, bat_y + 14.0), "Batteries", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, sub)
+	_draw_battery_row(font, x, bat_y + 30.0, panel_w, p.get("battery_port"), txt, sub, dim, sel_fire_port)
+	_draw_battery_row(font, x, bat_y + 58.0, panel_w, p.get("battery_stbd"), txt, sub, dim, not sel_fire_port)
 
 
-func _draw_battery_row(font: Font, x: float, y: float, panel_w: float, bat: Variant, txt: Color, sub: Color, dim: Color) -> void:
+func _draw_battery_row(font: Font, x: float, y: float, panel_w: float, bat: Variant, txt: Color, _sub: Color, dim: Color, selected: bool = false) -> void:
 	if bat == null:
 		draw_string(font, Vector2(x, y), "Battery —", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, dim)
 		return
 	var b: _BatteryController = bat
-	var line: String = "%s · %s · %s" % [b.side_label(), b.fire_mode_display(), b.state_display()]
+	var sel_tag: String = " [selected]" if selected else ""
+	var line: String = "%s · %s · %s%s" % [b.side_label(), b.fire_mode_display(), b.state_display(), sel_tag]
 	draw_string(font, Vector2(x, y), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, txt)
 	var bar_w: float = panel_w - 4.0
 	var bar_y: float = y + 12.0
@@ -1994,6 +2018,7 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 		return
 	var p: Dictionary = _players[_my_index]
 	var font: Font = ThemeDB.fallback_font
+	var sel_fire_battery: bool = bool(p.get("aim_broadside_port", true))
 	var hw: float = 60.0
 	var hh: float = 160.0
 	var cx: float = vp.x - hw - 20.0
@@ -2041,16 +2066,10 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 	var bat_entries: Array[Dictionary] = []
 	var port_b: Variant = p.get("battery_port")
 	var stbd_b: Variant = p.get("battery_stbd")
-	var bow_b: Variant = p.get("battery_bow")
-	var stern_b: Variant = p.get("battery_stern")
 	if port_b != null:
 		bat_entries.append({"bat": port_b, "pos": Vector2(cx - hw * 0.85, cy - hh * 0.05), "label": "P"})
 	if stbd_b != null:
 		bat_entries.append({"bat": stbd_b, "pos": Vector2(cx + hw * 0.85, cy - hh * 0.05), "label": "S"})
-	if bow_b != null:
-		bat_entries.append({"bat": bow_b, "pos": Vector2(cx, cy - hh * 0.48), "label": "B"})
-	if stern_b != null:
-		bat_entries.append({"bat": stern_b, "pos": Vector2(cx, cy + hh * 0.46), "label": "A"})
 	for be in bat_entries:
 		var bat: _BatteryController = be.bat
 		var bp: Vector2 = be.pos
@@ -2086,6 +2105,10 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 			state_label = "—"
 		draw_circle(bp, bat_icon_r, bc)
 		draw_arc(bp, bat_icon_r, 0.0, TAU, 16, Color(0.7, 0.75, 0.82, 0.8), 1.0, true)
+		var bat_is_selected: bool = (bat.side == _BatteryController.BatterySide.PORT and sel_fire_battery) \
+			or (bat.side == _BatteryController.BatterySide.STARBOARD and not sel_fire_battery)
+		if bat_is_selected:
+			draw_arc(bp, bat_icon_r + 4.0, 0.0, TAU, 24, Color(1.0, 0.9, 0.35, 0.9), 2.0, true)
 		if is_ready:
 			var pulse: float = 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.006)
 			draw_arc(bp, bat_icon_r + 2.5, 0.0, TAU, 16, Color(0.2, 1.0, 0.4, 0.4 * pulse), 1.5, true)
@@ -2100,10 +2123,7 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 			_BatteryController.BatterySide.STARBOARD:
 				lbl_offset = Vector2(bat_icon_r + 4.0, 3.5)
 				draw_string(font, bp + lbl_offset, state_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 7, bc)
-			_BatteryController.BatterySide.FORWARD:
-				lbl_offset = Vector2(-16.0, -bat_icon_r - 3.0)
-				draw_string(font, bp + lbl_offset, state_label, HORIZONTAL_ALIGNMENT_CENTER, 32, 7, bc)
-			_BatteryController.BatterySide.AFT:
+			_:
 				lbl_offset = Vector2(-16.0, bat_icon_r + 9.0)
 				draw_string(font, bp + lbl_offset, state_label, HORIZONTAL_ALIGNMENT_CENTER, 32, 7, bc)
 
@@ -2121,7 +2141,7 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 	draw_rect(Rect2(hp_bar_x, hp_bar_y, hp_bar_w * hp_frac, 10.0), hp_col)
 	draw_string(font, Vector2(hp_bar_x, hp_bar_y + 22.0), "Hull %d / %d" % [int(maxf(hp, 0.0)), int(HULL_HITS_MAX)], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.88, 0.90, 0.96, 0.95))
 	var elev_y: float = hp_bar_y + 34.0
-	var ref_bat: Variant = p.get("battery_port")
+	var ref_bat: Variant = p.get("battery_port") if sel_fire_battery else p.get("battery_stbd")
 	if ref_bat != null:
 		var elev_val: float = ref_bat.cannon_elevation
 		var elev_deg: float = ref_bat.elevation_degrees()
@@ -2188,14 +2208,15 @@ func _draw_helm_sail_hud(vp: Vector2) -> void:
 	draw_line(wheel_c, wheel_c + top_spoke * (wheel_r - 1.0), Color(0.95, 0.90, 0.72, 0.98), 2.0, true)
 	draw_circle(wheel_c + top_spoke * (wheel_r - 1.0), 1.9, Color(0.99, 0.94, 0.76, 1.0))
 	draw_line(wheel_c + Vector2(0.0, -wheel_r - 3.0), wheel_c + Vector2(0.0, -wheel_r + 1.0), Color(1.0, 0.35, 0.25, 0.95), 2.0, true)
-	var rud_visual_ang: float = -PI * 0.5 + helm.rudder_angle * (PI / 6.0)
+	var rud_max_rad: float = deg_to_rad(_HelmController.MAX_RUDDER_DEFLECTION_DEG)
+	var rud_visual_ang: float = -PI * 0.5 + helm.rudder_angle * rud_max_rad
 	var rud_tip: Vector2 = wheel_c + Vector2(cos(rud_visual_ang), sin(rud_visual_ang)) * (wheel_r - 5.0)
 	draw_line(wheel_c, rud_tip, Color(0.45, 0.95, 0.74, 0.9), 1.7, true)
 	draw_circle(rud_tip, 1.6, Color(0.45, 0.95, 0.74, 0.95))
 	var lock_text: String = "LOCK ON" if helm.wheel_locked else "LOCK OFF"
 	var lock_col: Color = Color(0.96, 0.68, 0.38, 0.96) if helm.wheel_locked else Color(0.62, 0.70, 0.82, 0.9)
 	draw_string(font, Vector2(x + 52.0, wheel_y + 16.0), "Wheel %s" % lock_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, lock_col)
-	var rud_deg: float = helm.rudder_angle * 30.0
+	var rud_deg: float = helm.rudder_angle * _HelmController.MAX_RUDDER_DEFLECTION_DEG
 	var rud_side: String = "P" if rud_deg < -0.5 else ("S" if rud_deg > 0.5 else "mid")
 	if helm.wheel_locked:
 		draw_string(font, Vector2(x + 52.0, wheel_y + 30.0), "Hold · Rudder %.0f° %s" % [absf(rud_deg), rud_side], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.9, 0.85, 0.72, 0.88))
@@ -2264,16 +2285,16 @@ func _draw_keybindings_panel(vp: Vector2) -> void:
 	var line_h: float = 13.0
 	var lines: Array[String] = [
 		"Bindings (keyboard · gamepad)",
-		"Q / ← / LB: aim PORT broadside only (does not shoot)",
-		"E / → / RB: aim STARBOARD broadside only (does not shoot)",
-		"F / X / RT: fire ALL ready batteries (port, starboard, bow, stern)",
+		"E / ← / LB: select PORT battery (aim + elevation + fire target)",
+		"Q / → / RB: select STARBOARD battery",
+		"F / X / RT: fire selected battery only",
 		"Steer: %s / %s" % [_action_keys_display(_ACTIONS.left), _action_keys_display(_ACTIONS.right)],
 		"Sail up · down: %s · %s" % [_action_keys_display(SAIL_RAISE_ACTION), _action_keys_display(SAIL_LOWER_ACTION)],
 		"Fire mode: %s" % _action_keys_display(FIRE_MODE_ACTION),
 		"Elevation up · down: %s · %s" % [_action_keys_display(ELEV_UP_ACTION), _action_keys_display(ELEV_DOWN_ACTION)],
 		"Wheel lock toggle: %s" % _action_keys_display(WHEEL_LOCK_ACTION),
 		"Zoom: mouse wheel or +/- buttons (top-right)",
-		"Pan: arrow keys or middle-mouse drag · 1/Home/Tab: snap camera to ship",
+		"Pan: arrow keys or middle-mouse drag · 1/Home/Tab: lock camera to follow your ship",
 	]
 	if OS.is_debug_build():
 		lines.append("Debug (dev build): F3 bot HUD · F4 bot world overlays")
@@ -2302,27 +2323,29 @@ func _draw_ability_bar(vp: Vector2) -> void:
 	draw_rect(Rect2(x, y, bar_w, bar_h), Color(0.34, 0.42, 0.52, 0.9), false, 2.0)
 	var p: Dictionary = _players[_my_index] if not _players.is_empty() else {}
 	var port_b: Variant = p.get("battery_port")
+	var stbd_b2: Variant = p.get("battery_stbd")
+	var sel_port_ab: bool = bool(p.get("aim_broadside_port", true)) if not p.is_empty() else true
+	var active_bat: Variant = port_b if sel_port_ab else stbd_b2
 	var mode_lbl: String = "Ripple"
 	if port_b != null and port_b.fire_mode == _BatteryController.FireMode.SALVO:
 		mode_lbl = "Barrage"
 	_draw_ability_slot(font, Vector2(x + 8.0, y + 12.0), _slot_key_caption(FIRE_MODE_ACTION), mode_lbl, true)
 	var elev_lbl: String = "+0.0°"
-	if port_b != null:
-		elev_lbl = port_b.elevation_label()
+	if active_bat != null:
+		elev_lbl = active_bat.elevation_label()
 	_draw_ability_slot(font, Vector2(x + 138.0, y + 12.0), "R/T", elev_lbl, true)
 	var helm: Variant = p.get("helm")
 	var wheel_locked: bool = helm != null and bool(helm.wheel_locked)
 	_draw_ability_slot(font, Vector2(x + 268.0, y + 12.0), _slot_key_caption(WHEEL_LOCK_ACTION), "Wheel lock", wheel_locked)
 	var ready_count: int = 0
 	var total_count: int = 0
-	for bat_key in ["battery_port", "battery_stbd", "battery_bow", "battery_stern"]:
-		var bat_check: Variant = p.get(bat_key)
-		if bat_check != null:
-			total_count += 1
-			if bat_check.state == _BatteryController.BatteryState.READY:
-				ready_count += 1
+	if active_bat != null:
+		total_count = 1
+		if active_bat.state == _BatteryController.BatteryState.READY:
+			ready_count = 1
+	var side_lbl: String = "P" if sel_port_ab else "S"
 	var fire_key: String = _slot_key_caption(_ACTIONS.atk)
-	var fire_lbl: String = "FIRE %d/%d" % [ready_count, total_count]
+	var fire_lbl: String = "FIRE %s %d/%d" % [side_lbl, ready_count, total_count]
 	_draw_ability_slot(font, Vector2(x + 398.0, y + 12.0), fire_key, fire_lbl, ready_count > 0)
 	var cam_hint: String = ""
 	if not _camera_locked:

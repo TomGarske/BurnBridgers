@@ -65,6 +65,8 @@ These are the fields owned by each `BatteryController` instance.
 | `firing_arc_degrees` | float | Half-angle of valid fire arc from ship side normal |
 | `max_range` | float | Maximum effective range in world units |
 | `auto_fire_enabled` | bool | Whether battery fires automatically when READY |
+| `cannon_elevation` | float [0.0–1.0] | Quoin: **0 → −5°**, **1 → +10°** depression/elevation; **~0.333 → 0°** (see `elevation_degrees()`) |
+| `ELEV_MIN_DEG` / `ELEV_MAX_DEG` | const | **−5°** / **+10°** — barrel limits used by ballistics (`CannonBallistics.initial_velocity` receives `elevation_degrees()`) |
 
 ### Ripple-Only Fields
 
@@ -287,4 +289,6 @@ Example ripple timing (6 cannons, 1.2 sec duration):
 - Chain shot, grapeshot mechanics (ammo type field is reserved)
 - Board-to-board range detection (future)
 - Battery damage HP (DISABLED state trigger is reserved for damage system integration)
-- Elevation / arc of fire affecting range
+- Per-gun traverse animation and non-uniform battery elevation (single quoin value per battery drives ballistics today)
+
+**Note:** Continuous **quoin elevation (−5°…+10°)** **is** in scope for v1 Blacksite; it affects projectile **initial velocity** via `CannonBallistics`, not a separate fudge multiplier on `vz` only.

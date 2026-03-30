@@ -145,7 +145,7 @@ The top-level logic evaluates in this order:
 
 **AcquireTarget**
 - Validate target exists
-- Acquire player ship in local sim
+- In **local sim**, multiple bots may be present (default **3**); each bot’s controller targets the **player** ship (`target_dict` = player entry)
 - Cache target references
 - Fail gracefully if no target
 
@@ -257,7 +257,7 @@ All must be `@export` variables.
 
 ## 9. Out of Scope
 
-- Multiple enemy ships
+- Fleet coordination between multiple **enemy** ships (local sim may spawn several bots, but each runs an independent `NavalBotController` without squad tactics)
 - Fleet coordination
 - Advanced utility AI
 - Morale / panic behavior

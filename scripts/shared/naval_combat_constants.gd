@@ -11,15 +11,15 @@ const MAP_TILES_HIGH: int = 800
 ## Movement tuning (higher top-end speed with same accel/decel feel).
 ## Residual speed when sails furled: current + wind on bare hull/rigging (~1.5 kn).
 ## Below MIN_SPEED_DRIFT so rudder loses authority — historically accurate.
-const SAILS_DOWN_DRIFT_SPEED: float = 0.8
-const MIN_SPEED_DRIFT: float = 1.5
-const QUARTER_SPEED: float = 4.0
-const CRUISE_SPEED: float = 7.0
-const MAX_SPEED: float = 11.5
+const SAILS_DOWN_DRIFT_SPEED: float = 1.5
+const MIN_SPEED_DRIFT: float = 2.8125
+const QUARTER_SPEED: float = 7.5
+const CRUISE_SPEED: float = 13.125
+const MAX_SPEED: float = 21.5625
 
-## Preserve previous linear acceleration/deceleration rates.
-const ACCEL_TIME_ZERO_TO_MAX: float = 29.76
-const DECEL_TIME_SAILS_DOWN: float = 27.06
+## Time (s) to accelerate 0 → MAX_SPEED under sail thrust; lower = snappier accel (~1.5× faster ship ⇒ ~1.5× shorter time).
+const ACCEL_TIME_ZERO_TO_MAX: float = 14.67
+const DECEL_TIME_SAILS_DOWN: float = 18.04
 
 ## Derived linear accel (u/s²)
 static func accel_rate() -> float:
@@ -30,24 +30,24 @@ static func decel_rate_sails() -> float:
 	return MAX_SPEED / maxf(0.001, DECEL_TIME_SAILS_DOWN)
 
 
-## Turning: heavy at all speeds.
-## Radius ≈ speed / deg_to_rad(rate). Quarter≈82u, Half≈335u, Full≈1465u.
+## Turning — scaled ~1.5× for faster, more maneuverable feel vs prior tuning.
+## Radius ≈ speed / deg_to_rad(rate).
 static func turn_rate_deg_for_speed(speed: float) -> float:
 	var s: float = clampf(speed, 0.0, MAX_SPEED * 1.1)
 	if s <= MIN_SPEED_DRIFT:
-		return 5.0
+		return 11.7
 	if s <= QUARTER_SPEED:
 		var t: float = (s - MIN_SPEED_DRIFT) / maxf(0.001, QUARTER_SPEED - MIN_SPEED_DRIFT)
-		return lerpf(5.0, 2.8, t)
+		return lerpf(11.7, 6.525, t)
 	if s <= CRUISE_SPEED:
 		var t: float = (s - QUARTER_SPEED) / maxf(0.001, CRUISE_SPEED - QUARTER_SPEED)
-		return lerpf(2.8, 1.2, t)
+		return lerpf(6.525, 2.775, t)
 	var t2: float = (s - CRUISE_SPEED) / maxf(0.001, MAX_SPEED - CRUISE_SPEED)
-	return lerpf(1.2, 0.45, clampf(t2, 0.0, 1.0))
+	return lerpf(2.775, 1.05, clampf(t2, 0.0, 1.0))
 
 
-## Rudder / heading inertia.
-const HELM_TURN_LAG_SEC: float = 2.5
+## Rudder / heading inertia (lower = heading catches rudder faster).
+const HELM_TURN_LAG_SEC: float = 1.1
 
 ## §4 Firing — half-angle from broadside normal (total arc per side ≈ 90°).
 ## Cannons can only traverse ±6° at the gunport; the arc represents the combined
@@ -70,12 +70,6 @@ static func broadside_quality(angle_from_bow_deg: float) -> float:
 	var t: float = (off_beam - BROADSIDE_QUALITY_FALLOFF_START_DEG) / (BROADSIDE_QUALITY_FALLOFF_END_DEG - BROADSIDE_QUALITY_FALLOFF_START_DEG)
 	return lerpf(1.0, 0.3, t)
 
-## Chase batteries: narrower arc, longer reload, fewer guns.
-const CHASE_HALF_ARC_DEG: float = 20.0
-const CHASE_CANNON_COUNT: int = 2
-const CHASE_RELOAD_TIME_SEC: float = 22.0
-const CHASE_BATTERY_DAMAGE: float = 40.0
-
 const RELOAD_TIME_SEC: float = 18.0
 
 ## §4.1 Max engagement (same unit space as wx, wy)
@@ -85,7 +79,7 @@ const CLOSE_RANGE: float = 120.0
 
 ## Projectile horizontal speed scale (req-weapons-layer-v1 suggests ~55 u/s; raised here so
 ## arc + lifetime still reach MAX_CANNON_RANGE on this map).
-const PROJECTILE_SPEED: float = 110.0
+const PROJECTILE_SPEED: float = 165.0
 const PROJECTILE_LIFETIME: float = 6.0
 const PROJECTILE_GRAVITY_SCALE: float = 0.32
 
@@ -134,12 +128,19 @@ static func spread_deg_for_range(distance: float) -> float:
 
 const TURNING_SPREAD_MULT: float = 1.4
 const HIGH_SPEED_SPREAD_MULT: float = 1.25
-const HIGH_SPEED_THRESHOLD: float = 16.0
+const HIGH_SPEED_THRESHOLD: float = 24.0
 
 
 ## Ship footprint for collision / hits (world units).
 const SHIP_LENGTH_UNITS: float = 60.0
 const SHIP_WIDTH_UNITS: float = 20.0
+## Main gun deck / freeboard above the water plane (world units ≈ m) — vertical extent for drawing & ballistics.
+const SHIP_DECK_HEIGHT_UNITS: float = 2.35
+## Muzzle height above water for broadside shots (gunport on the raised deck).
+const CANNON_MUZZLE_HEIGHT_UNITS: float = 2.75
+## Altitude band (above water) for counting cannon hits on the hull silhouette.
+const SHIP_HULL_HIT_H_MIN: float = 0.06
+const SHIP_HULL_HIT_H_MAX: float = 4.25
 ## Slightly expanded fallback radius for legacy/catch-all checks.
 const SHIP_HIT_RADIUS: float = 22.0
 
@@ -147,4 +148,4 @@ const SHIP_HIT_RADIUS: float = 22.0
 const CANNON_LINE_SPEED_SCALE: float = 2.6
 
 ## Camera: zoom baseline so ~20–40 tiles visible (tune with iso TILE_W)
-const NAVAL_DEFAULT_ZOOM: float = 0.14
+const NAVAL_DEFAULT_ZOOM: float = 0.22

@@ -295,62 +295,52 @@ In `blacksite_containment_arena.gd`, add a `_tick_bot(p: Dictionary, delta: floa
 
 ## Task 3: LocalSimController + Bot Spawning
 
-**File:** `scripts/shared/local_sim_controller.gd` — new
+**File:** `scripts/shared/local_sim_controller.gd` — implemented
 **Depends on:** Task 2 (NavalBotController)
 
 ### Step 3.1 — LocalSimController.gd
 
-A lightweight controller that hooks into the arena's spawn phase.
+A lightweight **RefCounted** helper invoked by the arena during spawn.
 
 ```gdscript
 class_name LocalSimController
 extends RefCounted
 
 var local_sim_enabled: bool = true
-var spawn_distance_min: float = 280.0   # outside OPTIMAL_RANGE (250)
-var spawn_distance_max: float = 400.0   # well within MAX_CANNON_RANGE (450)
-var spawn_bearing_offset_deg: float = 30.0  # not head-on
+var spawn_distance_min: float = 220.0
+var spawn_distance_max: float = 320.0
 ```
 
-Method: `create_bot_entry(player_dict: Dictionary) -> Dictionary`
-- Takes the player's ship dict to know their position/heading
-- Calculates spawn position at random distance within range
-- Applies bearing offset so opening isn't a pure nose-to-nose line
-- Returns a new ship dictionary with all the same fields as a player entry (wx, wy, dir, health, alive, controllers, etc.)
-- Marks it with `is_bot = true` and `bot_controller = NavalBotController.new()`
+Method: `create_bot_entry(player_dict: Dictionary, bot_index: int = 0) -> Dictionary`
+
+- Uses the player’s **wx/wy** as the center of an **axis-aligned square**. With mean distance `dist = (spawn_distance_min + spawn_distance_max) / 2`, half-side `s = dist / √2` places each corner **~dist** from the player.
+- **Corner order** (world X/Y): `(+,+)`, `(−,+)`, `(−,−)`, `(+,−)`; `bot_index` picks the corner (wraps with `posmod`).
+- **Heading:** bot faces **toward the player** with small random yaw jitter (`randf_range(-0.2, 0.2)` radians), not a fixed bearing-offset parameter.
+- Position is **clamped** to map bounds.
+- Returns a ship dict with `is_bot = true`, unique negative `peer_id`, palette, and label. **`NavalBotController` is attached in the arena** (`_init_bot_controllers`), not inside this helper.
 
 ### Step 3.2 — Arena Integration
 
 In `blacksite_containment_arena.gd`:
 
-1. After `_spawn_players()` in `_init_blacksite_movement_state()`, call `_spawn_local_sim_bot()` if in local sim mode (not multiplayer)
-2. `_spawn_local_sim_bot()`:
-   - Uses LocalSimController to create a bot dictionary entry
-   - Appends it to `_players` array
-   - Initializes all controllers (sail, helm, batteries, motion) identically to how `_init_blacksite_movement_state()` sets up player ships
-   - Sets `auto_fire_enabled = false` on batteries (the BT controls firing)
-3. In the arena's `_process()` loop, add after `_tick_player()`:
-   ```gdscript
-   for i in range(_players.size()):
-       var p = _players[i]
-       if p.get("is_bot", false):
-           _tick_bot(p, delta)
-   ```
+1. `@export var local_sim_enabled: bool = true` and `@export_range(1, 4) var local_sim_bot_count: int = 3`.
+2. After `_spawn_players()` in `_init_blacksite_movement_state()`, call `_spawn_local_sim_bot_if_needed()` when **offline** (`not multiplayer.has_multiplayer_peer()`), `local_sim_enabled`, and there is at least one human player.
+3. Remove dummy offline P2 placeholders, then loop `bot_i in range(clampi(local_sim_bot_count, 1, 4))`, calling `sim.create_bot_entry(player_dict, bot_i)` per bot, appending each entry, then `_init_bot_controllers` (sail **HALF** at spawn, batteries, helm, motion; `auto_fire_enabled = false` where the BT drives fire).
+4. In `_process`, after player tick, iterate `_players` and call `_tick_bot(p, delta)` for each `is_bot`.
 
 ### Step 3.3 — BotShipAgent Scene Tree Node
 
-Create the `BotShipAgent` Node2D as a child of the arena when the bot spawns. This is the agent node that LimboAI's BTPlayer attaches to. It syncs position from the bot's dictionary entry each frame.
+`BotShipAgent` is created as a child of the arena per bot; LimboAI’s `BTPlayer` attaches to it and syncs from the bot dict each frame.
 
 ### Step 3.4 — Detection: Local Sim vs Multiplayer
 
-Simple check: `not multiplayer.has_multiplayer_peer()` or `multiplayer.get_unique_id() == 1` (offline/host). Only spawn the bot when this is true.
+Primary gate: `not multiplayer.has_multiplayer_peer()`. Bots do not spawn in networked sessions.
 
 ### Validation
 
-- Launch the scene in editor. One player ship + one bot ship should appear.
-- Bot should be ~280–400 units away, offset angle, facing a usable intercept course.
-- Bot should begin approaching and attempting broadside passes within 10–15 seconds.
-- Killing the bot or player should end the match normally.
+- Launch offline: **one player + N bots** (default **N = 3**), on a **square** around the player at **~220–320** mean range (see `req-local-sim-v1.md`).
+- Each bot should face the player with jitter and begin maneuvering / firing per the BT.
+- Match end rules unchanged when any ship is eliminated.
 
 ---
 

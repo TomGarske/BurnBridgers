@@ -20,7 +20,7 @@ var steer_left: float = 0.0
 var steer_right: float = 0.0
 var fire_port_intent: bool = false
 var fire_stbd_intent: bool = false
-var desired_sail_state: int = 1   # 0=STOP 1=QUARTER 2=HALF 3=FULL
+var desired_sail_state: int = 1   # 0=STOP 1=QUARTER 2=HALF 3=FULL (match arena quarter sail)
 
 # ── Anti-jitter timers ────────────────────────────────────────────────
 var turn_commit_timer: float = 0.0
@@ -53,21 +53,29 @@ var bearing_to_target_deg: float = 0.0
 var _pending_fire_delay: float = 0.0
 var _pending_fire_side: String = ""
 
+# ── Incoming fire (arena calls when this bot’s hull takes a cannon hit) ──
+var hit_reaction_timer: float = 0.0
+var last_hit_attacker_peer_id: int = 0
+
 # ── Debug (req-debug-combat-v1) ─────────────────────────────────────────
 ## When false, arena skips this bot’s text panel.
-var show_debug_hud_panel: bool = true
+var show_debug_hud_panel: bool = false
 ## Verbose print() for pass / reposition / stuck / side switch (off by default).
 var debug_log_events: bool = false
 var current_bt_state: String = "init"
+## Log once if Limbo GDExtension failed to register (wrong Godot version, missing binaries).
+var _limbo_missing_logged: bool = false
 
 
 func _ready() -> void:
-	_setup_bt_player()
+	# GDExtension classes may register after the first frame; deferred improves first-run reliability.
+	call_deferred("_setup_bt_player")
 
 
 func _setup_bt_player() -> void:
+	if bt_player != null:
+		return
 	if not ClassDB.class_exists("BTPlayer"):
-		push_warning("NavalBotController: LimboAI (BTPlayer) not found — install/enable addons/limboai.")
 		return
 	bt_player = BTPlayer.new()
 	bt_player.name = "NavalBTPlayer"
@@ -76,8 +84,9 @@ func _setup_bt_player() -> void:
 	add_child(bt_player)
 	if is_instance_valid(get_parent()):
 		bt_player.set_scene_root_hint(get_parent())
-	if agent != null:
-		bt_player.agent_node = get_path_to(agent)
+	# Limbo resolves agent_node from BTPlayer's node, not from this controller.
+	if agent != null and is_instance_valid(agent):
+		bt_player.agent_node = bt_player.get_path_to(agent)
 	bt_player.behavior_tree = NavalBTDuelTree.build()
 	var bb: Blackboard = bt_player.blackboard
 	if bb != null:
@@ -104,11 +113,22 @@ func update(delta: float) -> void:
 	steer_right = 0.0
 	fire_port_intent = false
 	fire_stbd_intent = false
-	if bt_player != null:
-		bt_player.update(delta)
+	if bt_player == null:
+		_setup_bt_player()
+	if bt_player == null or bt_player.behavior_tree == null:
+		if not _limbo_missing_logged:
+			push_error(
+				"NavalBotController: LimboAI is required for naval bots. "
+				+ "Ensure addons/limboai is present, limboai.gdextension loads (Godot 4.6+ per LimboAI 1.7.x), "
+				+ "and restart the editor. Project Settings → Limbo AI should list res://ai/tasks/naval for custom tasks."
+			)
+			_limbo_missing_logged = true
+		return
+	bt_player.update(delta)
 
 
 func _tick_timers(delta: float) -> void:
+	hit_reaction_timer = maxf(0.0, hit_reaction_timer - delta)
 	turn_commit_timer = maxf(0.0, turn_commit_timer - delta)
 	side_switch_cooldown_timer = maxf(0.0, side_switch_cooldown_timer - delta)
 	maneuver_lock_timer = maxf(0.0, maneuver_lock_timer - delta)
@@ -188,6 +208,20 @@ func _sync_limbo_blackboard() -> void:
 	bb.set_var(&"fire_block_reason", fire_block_reason)
 	bb.set_var(&"port_loaded", port_b != null and int(port_b.state) == rs)
 	bb.set_var(&"starboard_loaded", stbd_b != null and int(stbd_b.state) == rs)
+	bb.set_var(&"recently_hit", hit_reaction_timer > 0.0)
+	bb.set_var(&"last_hit_attacker_peer_id", last_hit_attacker_peer_id)
+
+
+## Called from arena when this bot receives a registered cannon hit (not every frame).
+func notify_cannon_hit(attacker_peer_id: int) -> void:
+	last_hit_attacker_peer_id = attacker_peer_id
+	hit_reaction_timer = 0.85
+	# Do not stack fire-commit state with a pending delayed shot.
+	_pending_fire_delay = 0.0
+	_pending_fire_side = ""
+	fire_block_reason = "took_hit"
+	if debug_log_events:
+		print("[NavalBot] hit from peer %d" % attacker_peer_id)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -381,8 +415,10 @@ func _steer_for_broadside_on_side(side_to_use: String) -> void:
 		use_side = str(broadside_result.get("target_side", "port"))
 	var desired_dir: Vector2 = to_tgt_n.rotated(-PI * 0.5) if use_side == "port" else to_tgt_n.rotated(PI * 0.5)
 	var cross_val: float = ship_dir.cross(desired_dir)
-	var steer_dir: float = signf(cross_val) if absf(cross_val) > 0.02 else 0.0
-	_commit_turn(steer_dir, 0.35)
+	var steer_dir: float = clampf(cross_val * 14.0, -1.0, 1.0)
+	if absf(steer_dir) < 0.38 and absf(cross_val) > 1e-4:
+		steer_dir = signf(cross_val) * 0.38
+	_commit_turn(steer_dir, 0.22)
 	if range_band == _Evaluator.RangeBand.PREFERRED:
 		desired_sail_state = 2
 	else:
@@ -430,10 +466,12 @@ func _try_establish_broadside(_delta: float) -> bool:
 		# Target on starboard → rotate heading so stbd beam faces target.
 		desired_dir = to_tgt_n.rotated(PI * 0.5)
 
-	# Steer toward desired heading.
+	# Steer toward desired heading (proportional + floor — avoids dead zone where AI outputs 0 and drifts).
 	var cross_val: float = ship_dir.cross(desired_dir)
-	var steer_dir: float = signf(cross_val) if absf(cross_val) > 0.02 else 0.0
-	_commit_turn(steer_dir, 0.5)
+	var steer_dir: float = clampf(cross_val * 14.0, -1.0, 1.0)
+	if absf(steer_dir) < 0.4 and absf(cross_val) > 1e-4:
+		steer_dir = signf(cross_val) * 0.4
+	_commit_turn(steer_dir, 0.22)
 
 	# Speed: HALF in preferred range, FULL if far.
 	if range_band == _Evaluator.RangeBand.PREFERRED:
@@ -463,8 +501,10 @@ func _try_approach(_delta: float) -> bool:
 	var approach_dir: Vector2 = to_tgt_n.rotated(offset if randf() > 0.5 else -offset)
 
 	var cross_val: float = ship_dir.cross(approach_dir)
-	var steer_dir: float = signf(cross_val) if absf(cross_val) > 0.05 else 0.0
-	_commit_turn(steer_dir, 0.3)
+	var steer_dir: float = clampf(cross_val * 12.0, -1.0, 1.0)
+	if absf(steer_dir) < 0.4 and absf(cross_val) > 1e-4:
+		steer_dir = signf(cross_val) * 0.4
+	_commit_turn(steer_dir, 0.22)
 
 	desired_sail_state = 3  # FULL
 	fire_block_reason = "approaching"
@@ -489,9 +529,13 @@ func _hold_pattern(_delta: float) -> void:
 ## Commit to a turn direction for a minimum duration.
 func _commit_turn(direction: float, min_duration: float) -> void:
 	if turn_commit_timer > 0.0:
-		# Already committed — honour existing commitment.
-		_set_steer(turn_commit_direction)
-		return
+		# Break out early if we committed hard one way but geometry now needs the opposite (overshoot).
+		var opp: bool = signf(direction) != signf(turn_commit_direction)
+		if opp and absf(direction) > 0.45 and absf(turn_commit_direction) > 0.45:
+			turn_commit_timer = 0.0
+		else:
+			_set_steer(turn_commit_direction)
+			return
 	turn_commit_direction = direction
 	turn_commit_timer = maxf(min_duration, _Evaluator.TURN_COMMIT_DURATION * 0.5)
 	_set_steer(direction)
