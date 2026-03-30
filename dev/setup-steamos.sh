@@ -28,7 +28,7 @@ GODOTSTEAM_GDE_TAG="v4.17.1-gde"
 GODOTSTEAM_ARCHIVE="godotsteam-4.17-gdextension-plugin-4.4.tar.xz"
 GODOTSTEAM_BASE_URL="https://codeberg.org/godotsteam/godotsteam/releases/download"
 
-# Steam app ID — Fireteam MNG Playtest (App ID 4530870)
+# Steam app ID — Ironwake Playtest (App ID 4530870)
 STEAM_APP_ID="4530870"
 
 # ── Godot extension registry ──────────────────────────────────────────

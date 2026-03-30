@@ -16,14 +16,11 @@ const MUZZLE_HEIGHT: float = _NC.CANNON_MUZZLE_HEIGHT_UNITS
 const MIN_MASS: float = 0.5
 const MAX_MASS: float = 1.75
 
-## How far from a ship plan position (wx, wy) a ball can score a hull hit (world units).
-const SHIP_HIT_RADIUS: float = 1.35
 ## Pass through this height band to count as hitting the hull (not flying high overhead).
 const HULL_HIT_MIN_H: float = _NC.SHIP_HULL_HIT_H_MIN
 const HULL_HIT_MAX_H: float = _NC.SHIP_HULL_HIT_H_MAX
 
 const PHYSICS_SUBSTEP: float = 1.0 / 120.0
-const MAX_FLIGHT_TIME: float = 16.0
 
 ## Visual: screen Y offset per world-unit height (scaled by arena zoom in caller).
 const SCREEN_HEIGHT_PX_PER_UNIT: float = 16.0

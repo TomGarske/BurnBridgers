@@ -48,7 +48,7 @@ if (-not (Test-Path $presetTemplatePath)) {
 Copy-Item -Path $presetTemplatePath -Destination $presetPath -Force
 New-Item -ItemType Directory -Path $outputDirResolved -Force | Out-Null
 
-$gameExePath = Join-Path $outputDirResolved "FireTeamMNG.exe"
+$gameExePath = Join-Path $outputDirResolved "Ironwake.exe"
 $godotCommand = Resolve-GodotCommand
 
 Write-Host "Exporting with preset '$ExportPresetName' to '$gameExePath'..."

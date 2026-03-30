@@ -10,8 +10,8 @@ config_version=5
 
 [application]
 
-config/name="FireTeam MNG"
-config/description="Multiplayer 2D — proof of concept"
+config/name="Ironwake"
+config/description="Multiplayer naval combat — sail, maneuver, and broadside"
 config/version="0.1.0"
 run/main_scene="res://scenes/screens/home_screen.tscn"
 config/features=PackedStringArray("4.6", "GL Compatibility")
@@ -30,10 +30,6 @@ window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-
-[editor_plugins]
-
-enabled=PackedStringArray("res://addons/godot_mcp/plugin.cfg")
 
 [limbo_ai]
 

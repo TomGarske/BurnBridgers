@@ -57,7 +57,7 @@ const _MAX_INIT_RETRIES: int = 4
 const _HOST_RETRY_MS: int = 3000
 const _MAX_HOST_RETRIES: int = 3
 const _MAX_DEBUG_HISTORY: int = 300
-const _GAME_NAME: String = "FireTeam MNG"
+const _GAME_NAME: String = "Ironwake"
 const _STEAM_EXTENSION_CANDIDATES: Array[String] = [
 	"res://addons/godotsteam/godotsteam.gdextension",
 	"res://addons/GodotSteam/godotsteam.gdextension",
