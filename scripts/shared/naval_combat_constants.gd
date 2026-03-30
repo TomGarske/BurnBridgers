@@ -30,24 +30,29 @@ static func decel_rate_sails() -> float:
 	return MAX_SPEED / maxf(0.001, DECEL_TIME_SAILS_DOWN)
 
 
-## Turning — scaled ~1.5× for faster, more maneuverable feel vs prior tuning.
+## Turning — relaxed speed penalty so ships stay maneuverable at cruise/full sail.
 ## Radius ≈ speed / deg_to_rad(rate).
 static func turn_rate_deg_for_speed(speed: float) -> float:
 	var s: float = clampf(speed, 0.0, MAX_SPEED * 1.1)
 	if s <= MIN_SPEED_DRIFT:
-		return 11.7
+		return 13.0
 	if s <= QUARTER_SPEED:
 		var t: float = (s - MIN_SPEED_DRIFT) / maxf(0.001, QUARTER_SPEED - MIN_SPEED_DRIFT)
-		return lerpf(11.7, 6.525, t)
+		return lerpf(13.0, 9.0, t)
 	if s <= CRUISE_SPEED:
 		var t: float = (s - QUARTER_SPEED) / maxf(0.001, CRUISE_SPEED - QUARTER_SPEED)
-		return lerpf(6.525, 2.775, t)
+		return lerpf(9.0, 5.5, t)
 	var t2: float = (s - CRUISE_SPEED) / maxf(0.001, MAX_SPEED - CRUISE_SPEED)
-	return lerpf(2.775, 1.05, clampf(t2, 0.0, 1.0))
+	return lerpf(5.5, 3.0, clampf(t2, 0.0, 1.0))
 
 
 ## Rudder / heading inertia (lower = heading catches rudder faster).
-const HELM_TURN_LAG_SEC: float = 1.1
+const HELM_TURN_LAG_SEC: float = 0.65
+
+## Speed at which rudder reaches full steering authority (linear ramp MIN→1).
+const RUDDER_AUTHORITY_SPEED: float = 5.0
+## Minimum rudder authority at zero speed (warping/kedging — slow pivot at anchor).
+const RUDDER_AUTHORITY_MIN: float = 0.25
 
 ## §4 Firing — half-angle from broadside normal (total arc per side ≈ 90°).
 ## Cannons can only traverse ±6° at the gunport; the arc represents the combined
@@ -117,23 +122,24 @@ static func hit_probability(distance: float) -> float:
 	return 0.02
 
 ## Base half-spread (degrees) before pattern offsets — req-weapons-layer-v1 §Accuracy Model.
+## Tightened 10% vs original values.
 static func spread_deg_for_range(distance: float) -> float:
 	var d: float = maxf(0.0, distance)
 	if d < 100.0:
-		return lerpf(2.0, 4.0, clampf(d / 100.0, 0.0, 1.0))
+		return lerpf(1.8, 3.6, clampf(d / 100.0, 0.0, 1.0))
 	if d < 200.0:
-		return lerpf(5.0, 8.0, (d - 100.0) / 100.0)
+		return lerpf(4.5, 7.2, (d - 100.0) / 100.0)
 	var t_far: float = clampf((d - 200.0) / maxf(1.0, ACC_LONG_RANGE - 200.0), 0.0, 1.0)
-	return lerpf(10.0, 15.0, t_far)
+	return lerpf(9.0, 13.5, t_far)
 
 const TURNING_SPREAD_MULT: float = 1.4
 const HIGH_SPEED_SPREAD_MULT: float = 1.25
-const HIGH_SPEED_THRESHOLD: float = 24.0
+const HIGH_SPEED_THRESHOLD: float = 19.0
 
 
 ## Ship footprint for collision / hits (world units).
-const SHIP_LENGTH_UNITS: float = 60.0
-const SHIP_WIDTH_UNITS: float = 20.0
+const SHIP_LENGTH_UNITS: float = 75.0
+const SHIP_WIDTH_UNITS: float = 26.0
 ## Main gun deck / freeboard above the water plane (world units ≈ m) — vertical extent for drawing & ballistics.
 const SHIP_DECK_HEIGHT_UNITS: float = 2.35
 ## Muzzle height above water for broadside shots (gunport on the raised deck).
@@ -141,8 +147,8 @@ const CANNON_MUZZLE_HEIGHT_UNITS: float = 2.75
 ## Altitude band (above water) for counting cannon hits on the hull silhouette.
 const SHIP_HULL_HIT_H_MIN: float = 0.06
 const SHIP_HULL_HIT_H_MAX: float = 4.25
-## Slightly expanded fallback radius for legacy/catch-all checks.
-const SHIP_HIT_RADIUS: float = 22.0
+## Ellipse hit test tolerance: k <= this value counts as a hull hit (1.0 = exact ellipse).
+const ELLIPSE_HIT_SLACK: float = 1.15
 
 ## Ballistics scale vs legacy iso tuning (line speed)
 const CANNON_LINE_SPEED_SCALE: float = 2.6

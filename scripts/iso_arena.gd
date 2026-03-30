@@ -329,12 +329,7 @@ func _close_pause_menu() -> void:
 
 func _request_quit_to_menu() -> void:
 	_close_pause_menu()
-	if quit_confirm_dialog == null:
-		get_tree().change_scene_to_file(GameManager.HOME_SCREEN_SCENE_PATH)
-		return
-	_apply_quit_dialog_theme()
-	quit_confirm_dialog.dialog_text = "Are you sure you want to leave this match and return to the main menu?"
-	quit_confirm_dialog.popup_centered()
+	get_tree().change_scene_to_file(GameManager.HOME_SCREEN_SCENE_PATH)
 
 func _apply_quit_dialog_theme() -> void:
 	if quit_confirm_dialog == null:
