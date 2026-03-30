@@ -53,6 +53,13 @@ var reload_timer: float = 0.0
 var firing_arc_degrees: float = 50.0
 var max_range: float = 14.0
 var auto_fire_enabled: bool = false
+## Continuous cannon elevation: 0.0 = min depression (-5°), 1.0 = max elevation (+10°).
+## Neutral (flat/0°) sits at ~0.333.  Controlled by quoin wedge under the breech.
+const ELEV_MIN_DEG: float = -5.0
+const ELEV_MAX_DEG: float = 10.0
+var cannon_elevation: float = 0.333
+## How fast the gun crew can adjust the quoin per second (normalized 0–1 units).
+const ELEVATION_ADJUST_RATE: float = 0.35
 var battery_damage: float = 75.0
 var fire_sequence_duration: float = 0.2
 var shots_remaining_in_sequence: int = 0
@@ -64,8 +71,15 @@ func get_ripple_interval() -> float:
 
 
 func _broadside_perp(hull_dir: Vector2) -> Vector2:
-	if side == BatterySide.PORT:
-		return hull_dir.rotated(PI * 0.5).normalized()
+	match side:
+		BatterySide.PORT:
+			return hull_dir.rotated(PI * 0.5).normalized()
+		BatterySide.STARBOARD:
+			return hull_dir.rotated(-PI * 0.5).normalized()
+		BatterySide.FORWARD:
+			return hull_dir.normalized()
+		BatterySide.AFT:
+			return (-hull_dir).normalized()
 	return hull_dir.rotated(-PI * 0.5).normalized()
 
 
@@ -221,6 +235,33 @@ func state_display() -> String:
 		BatteryState.DISABLED:
 			return "Disabled"
 	return "—"
+
+
+func elevation_degrees() -> float:
+	return lerpf(ELEV_MIN_DEG, ELEV_MAX_DEG, cannon_elevation)
+
+
+func adjust_elevation(delta: float, direction: float) -> void:
+	cannon_elevation = clampf(cannon_elevation + direction * ELEVATION_ADJUST_RATE * delta, 0.0, 1.0)
+
+
+func elevation_label() -> String:
+	var deg: float = elevation_degrees()
+	var sign_str: String = "+" if deg >= 0.0 else ""
+	return "%s%.1f°" % [sign_str, deg]
+
+
+## Returns a vz multiplier based on continuous cannon_elevation.
+## Realistic range: -5° (depressed, short range) to +10° (max loft).
+## -5° → mult 0.48 (range ~120u point-blank)
+##  0° → mult 1.0  (range ~250u optimal combat)
+## +5° → mult 1.4  (range ~350u)
+## +10° → mult 1.8  (range ~450u maximum)
+func elevation_vz_multiplier(_target_distance: float, _optimal_range: float, _max_range: float) -> float:
+	var deg: float = elevation_degrees()
+	if deg <= 0.0:
+		return lerpf(0.48, 1.0, (deg - ELEV_MIN_DEG) / absf(ELEV_MIN_DEG))
+	return lerpf(1.0, 1.8, deg / ELEV_MAX_DEG)
 
 
 func side_label() -> String:

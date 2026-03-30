@@ -49,7 +49,6 @@ const TERRAIN_RENDERER_SCRIPT := preload("res://scripts/shared/iso_terrain_rende
 @onready var pause_backdrop: ColorRect = $UILayer/PauseBackdrop
 @onready var pause_menu_panel: PanelContainer = $UILayer/PauseMenuPanel
 @onready var pause_resume_button: Button = $UILayer/PauseMenuPanel/PauseMenuMargin/PauseMenuVBox/PauseResumeButton
-@onready var pause_music_button: Button = $UILayer/PauseMenuPanel/PauseMenuMargin/PauseMenuVBox/PauseMusicButton
 @onready var pause_quit_button: Button = $UILayer/PauseMenuPanel/PauseMenuMargin/PauseMenuVBox/PauseQuitButton
 @onready var quit_confirm_dialog: ConfirmationDialog = $UILayer/QuitConfirmDialog
 
@@ -93,7 +92,6 @@ func _ready() -> void:
 	_load_geo_map()
 	_origin = get_viewport_rect().size * 0.5
 	_spawn_players()
-	_setup_game_music()
 	if quit_game_button != null:
 		quit_game_button.visible = false
 	if pause_menu_panel != null:
@@ -102,21 +100,15 @@ func _ready() -> void:
 		pause_backdrop.visible = false
 	UiStyleScript.style_panel(pause_menu_panel)
 	UiStyleScript.style_button(pause_resume_button)
-	UiStyleScript.style_button(pause_music_button)
 	UiStyleScript.style_button(pause_quit_button)
-	if pause_resume_button != null and pause_music_button != null and pause_quit_button != null:
-		pause_resume_button.focus_neighbor_bottom = pause_resume_button.get_path_to(pause_music_button)
-		pause_music_button.focus_neighbor_top = pause_music_button.get_path_to(pause_resume_button)
-		pause_music_button.focus_neighbor_bottom = pause_music_button.get_path_to(pause_quit_button)
-		pause_quit_button.focus_neighbor_top = pause_quit_button.get_path_to(pause_music_button)
+	if pause_resume_button != null and pause_quit_button != null:
+		pause_resume_button.focus_neighbor_bottom = pause_resume_button.get_path_to(pause_quit_button)
+		pause_quit_button.focus_neighbor_top = pause_quit_button.get_path_to(pause_resume_button)
 		pause_quit_button.focus_neighbor_bottom = pause_quit_button.get_path_to(pause_resume_button)
 	if pause_resume_button != null and not pause_resume_button.pressed.is_connected(_on_pause_resume_pressed):
 		pause_resume_button.pressed.connect(_on_pause_resume_pressed)
-	if pause_music_button != null and not pause_music_button.pressed.is_connected(_on_pause_music_pressed):
-		pause_music_button.pressed.connect(_on_pause_music_pressed)
 	if pause_quit_button != null and not pause_quit_button.pressed.is_connected(_on_pause_quit_pressed):
 		pause_quit_button.pressed.connect(_on_pause_quit_pressed)
-	_update_pause_music_button_label()
 	if quit_game_button != null and not quit_game_button.pressed.is_connected(_on_quit_game_button_pressed):
 		quit_game_button.pressed.connect(_on_quit_game_button_pressed)
 	if quit_confirm_dialog != null and not quit_confirm_dialog.confirmed.is_connected(_on_quit_confirmed):
@@ -125,8 +117,6 @@ func _ready() -> void:
 		quit_confirm_dialog.title = "Leave Match"
 		quit_confirm_dialog.ok_button_text = "Quit Match"
 		_apply_quit_dialog_theme()
-	if GameManager != null and not GameManager.music_enabled_changed.is_connected(_on_music_enabled_changed):
-		GameManager.music_enabled_changed.connect(_on_music_enabled_changed)
 	if multiplayer.has_multiplayer_peer():
 		if not multiplayer.peer_connected.is_connected(_on_peer_connected):
 			multiplayer.peer_connected.connect(_on_peer_connected)
@@ -135,8 +125,7 @@ func _ready() -> void:
 	queue_redraw()
 
 func _exit_tree() -> void:
-	if GameManager != null and GameManager.music_enabled_changed.is_connected(_on_music_enabled_changed):
-		GameManager.music_enabled_changed.disconnect(_on_music_enabled_changed)
+	pass
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
@@ -255,37 +244,6 @@ func _ensure_joy_motion_for_action(action: String, axis: JoyAxis, axis_value: fl
 	motion_event.device = device
 	InputMap.action_add_event(action, motion_event)
 
-func _setup_game_music() -> void:
-	if MusicManager == null:
-		return
-	MusicManager.seek_to_phase("build1")
-	if GameManager != null:
-		MusicManager.set_volume(GameManager.music_volume)
-		MusicManager.set_profile(GameManager.music_intensity, GameManager.music_speed, GameManager.music_tone)
-	else:
-		MusicManager.set_volume(0.52)
-	if GameManager != null and GameManager.music_enabled:
-		MusicManager.play()
-	else:
-		MusicManager.stop()
-
-func _on_music_enabled_changed(enabled: bool) -> void:
-	if MusicManager == null:
-		return
-	if GameManager != null:
-		MusicManager.set_volume(GameManager.music_volume)
-		MusicManager.set_profile(GameManager.music_intensity, GameManager.music_speed, GameManager.music_tone)
-	if enabled:
-		MusicManager.play()
-	else:
-		MusicManager.stop()
-	_update_pause_music_button_label()
-
-func _update_pause_music_button_label() -> void:
-	if pause_music_button == null or GameManager == null:
-		return
-	pause_music_button.text = "Music: %s" % ("On" if GameManager.music_enabled else "Off")
-
 # ── Player spawning ───────────────────────────────────────────────────────────
 func _spawn_players() -> void:
 	var peer_ids: Array[int] = []
@@ -342,12 +300,6 @@ func _on_quit_game_button_pressed() -> void:
 func _on_pause_resume_pressed() -> void:
 	_close_pause_menu()
 
-func _on_pause_music_pressed() -> void:
-	if GameManager == null:
-		return
-	GameManager.set_music_enabled(not GameManager.music_enabled)
-	_update_pause_music_button_label()
-
 func _on_pause_quit_pressed() -> void:
 	_request_quit_to_menu()
 
@@ -365,7 +317,6 @@ func _open_pause_menu() -> void:
 	pause_menu_panel.visible = true
 	if pause_backdrop != null:
 		pause_backdrop.visible = true
-	_update_pause_music_button_label()
 	if pause_resume_button != null:
 		pause_resume_button.grab_focus()
 
@@ -582,9 +533,15 @@ func _check_win() -> void:
 			alive_count += 1
 			last_alive   = i
 	if alive_count == 0:
-		_set_winner.rpc(-1)
+		if multiplayer.has_multiplayer_peer():
+			_set_winner.rpc(-1)
+		else:
+			_set_winner(-1)
 	elif alive_count == 1:
-		_set_winner.rpc(last_alive)
+		if multiplayer.has_multiplayer_peer():
+			_set_winner.rpc(last_alive)
+		else:
+			_set_winner(last_alive)
 
 @rpc("authority", "call_local", "reliable")
 func _set_winner(next_winner: int) -> void:

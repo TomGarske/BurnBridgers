@@ -1,10 +1,13 @@
 extends RefCounted
 class_name BlacksiteMapProfile
 
+const NC := preload("res://scripts/shared/naval_combat_constants.gd")
+
 # Open-sea sailing surface: expanded water grid, no structures (walls/building removed).
 
-const MAP_WIDTH: int = 128
-const MAP_HEIGHT: int = 128
+## req-naval-combat-prototype-v1 §2.3 — logical tiles; wx,wy use NC.UNITS_PER_LOGIC_TILE.
+static var MAP_WIDTH: int = NC.MAP_TILES_WIDE
+static var MAP_HEIGHT: int = NC.MAP_TILES_HIGH
 
 const SEA_SKY: Color = Color(0.40, 0.58, 0.78, 1.0)
 ## Kept for callers that used the old name (e.g. menu background).
@@ -27,6 +30,9 @@ static func draw_map_overlay(_canvas: CanvasItem, _origin: Vector2, _tile_w: flo
 static func get_default_view_focus(layout: Dictionary) -> Vector2:
 	var map_w: float = float(layout.get("map_width", MAP_WIDTH))
 	var map_h: float = float(layout.get("map_height", MAP_HEIGHT))
+	if bool(layout.get("open_sea", false)):
+		var u: float = NC.UNITS_PER_LOGIC_TILE
+		return Vector2(map_w * 0.5 * u, map_h * 0.5 * u)
 	return Vector2(map_w * 0.5, map_h * 0.5)
 
 
@@ -60,21 +66,23 @@ static func build_open_sea_map(width: int = MAP_WIDTH, height: int = MAP_HEIGHT)
 	}
 
 
-## Player ship spawn positions in open water (world tiles).
+## Player ship spawn positions in open water (world units; §2.1).
 static func build_drone_spawns(data: Dictionary) -> Array:
 	var width: int = int(data.get("width", MAP_WIDTH))
 	var height: int = int(data.get("height", MAP_HEIGHT))
-	var cx: float = width * 0.5
-	var cy: float = height * 0.5
+	var u: float = NC.UNITS_PER_LOGIC_TILE
+	var cx: float = width * 0.5 * u
+	var cy: float = height * 0.5 * u
+	# Wide separation so large hull footprints do not overlap at start.
 	return [
-		Vector2(cx - 8.0, cy + 4.0),
-		Vector2(cx - 2.0, cy + 6.0),
-		Vector2(cx + 4.0, cy + 4.0),
-		Vector2(cx + 10.0, cy + 2.0),
-		Vector2(cx - 8.0, cy - 2.0),
-		Vector2(cx - 2.0, cy - 4.0),
-		Vector2(cx + 4.0, cy - 2.0),
-		Vector2(cx + 10.0, cy - 4.0),
+		Vector2(cx - 220.0, cy + 140.0),
+		Vector2(cx - 220.0, cy - 140.0),
+		Vector2(cx + 220.0, cy + 140.0),
+		Vector2(cx + 220.0, cy - 140.0),
+		Vector2(cx - 90.0, cy + 230.0),
+		Vector2(cx + 90.0, cy + 230.0),
+		Vector2(cx - 90.0, cy - 230.0),
+		Vector2(cx + 90.0, cy - 230.0),
 	]
 
 

@@ -5,8 +5,8 @@ extends RefCounted
 
 ## World units / s² — tuned with muzzle speed so hang time feels like a heavy iron ball (~0.5–2 s in air).
 const GRAVITY: float = 38.0
-## Launch angle above horizontal in the vertical plane of the shot (broadside loft).
-const ELEVATION_RAD: float = deg_to_rad(21.0)
+## Base launch angle — near flat; the battery quoin controls effective elevation.
+const ELEVATION_RAD: float = deg_to_rad(7.0)
 ## Baseline muzzle speed along the shot line at mass == 1.0 (world units/s). Heavier balls use lower speed.
 const BASE_MUZZLE_SPEED: float = 26.0
 ## Height above water at muzzle (world units).
@@ -36,13 +36,13 @@ static func horizontal_speed(vx: float, vy: float) -> float:
 
 
 ## Heavier mass → lower v_line (same powder, harder to accelerate); vertical share follows elevation.
-static func initial_velocity(horizontal_dir: Vector2, mass: float) -> Dictionary:
+static func initial_velocity(horizontal_dir: Vector2, mass: float, line_speed_scale: float = 1.0) -> Dictionary:
 	var dir: Vector2 = horizontal_dir.normalized()
 	if dir.length_squared() < 0.0001:
 		dir = Vector2.RIGHT
 	var m: float = clampf(mass, MIN_MASS, MAX_MASS)
 	# v_line scales ~ 1/sqrt(m): heavy ball exits slower → shorter ground range, quicker return to sea.
-	var v_line: float = BASE_MUZZLE_SPEED / sqrt(m)
+	var v_line: float = BASE_MUZZLE_SPEED * line_speed_scale / sqrt(m)
 	var ch: float = cos(ELEVATION_RAD)
 	var sh: float = sin(ELEVATION_RAD)
 	return {

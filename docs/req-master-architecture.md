@@ -149,7 +149,10 @@ The complete prototype is built from the following state systems. Each system ru
 |--------|---------|
 | Repair / Recovery FSM | Crew assignment for hull, rigging, weapon, flood repair |
 | Crew / Station Readiness | Reload speed modifiers, manning penalties |
-| AI Captain FSM | Patrol → Approach → Broadside → Evade → Disengage |
+| AI Captain FSM | Patrol → Approach → Broadside → Evade → Disengage (see `req-ai-naval-bot-v1.md`) |
+| Combat Evaluator | Broadside quality scoring, engagement bands (see `req-combat-loop-v1.md`) |
+| Local Sim Controller | Bot spawning for local testing (see `req-local-sim-v1.md`) |
+| Combat Debug | HUD, draw overlays, logging (see `req-debug-combat-v1.md`) |
 | Camera State | Follow → CombatBroadside → AimMode → CinematicImpact |
 
 ### Tier 3 — Polish / Depth
@@ -282,6 +285,10 @@ Recommended implementation sequence for reaching first playable:
 | `req-motion-fsm.md` | Ship Motion State Machine |
 | `req-battery-fsm.md` | Cannon Battery State Machine |
 | `req-master-architecture.md` | This document |
+| `req-combat-loop-v1.md` | Broadside Quality, Engagement Bands, Pass Rhythm |
+| `req-ai-naval-bot-v1.md` | LimboAI Bot Controller and Behavior Tree |
+| `req-local-sim-v1.md` | Local Simulation Bot Spawning |
+| `req-debug-combat-v1.md` | Combat Debug Visualization and Telemetry |
 | *(future)* `req-integrity.md` | Ship Hull Integrity |
 | *(future)* `req-damage-zones.md` | Per-Zone Damage States |
 | *(future)* `req-flooding.md` | Flooding / Buoyancy State |
