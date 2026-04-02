@@ -11,15 +11,15 @@ const MAP_TILES_HIGH: int = 800
 ## Movement tuning (higher top-end speed with same accel/decel feel).
 ## Residual speed when sails furled: zero — ship comes to a full stop once momentum decays.
 const SAILS_DOWN_DRIFT_SPEED: float = 0.0
-const MIN_SPEED_DRIFT: float = 2.0
-const QUARTER_SPEED: float = 9.0
-const CRUISE_SPEED: float = 16.0
-const MAX_SPEED: float = 27.5
+const MIN_SPEED_DRIFT: float = 2.6
+const QUARTER_SPEED: float = 11.7
+const CRUISE_SPEED: float = 20.8
+const MAX_SPEED: float = 35.75
 
 ## Time (s) to accelerate 0 → MAX_SPEED under sail thrust.
 const ACCEL_TIME_ZERO_TO_MAX: float = 10.0
-## Decel is slower — heavy hull carries momentum.
-const DECEL_TIME_SAILS_DOWN: float = 22.0
+## Decel is slower — heavy hull carries momentum (thousands of tons of inertia).
+const DECEL_TIME_SAILS_DOWN: float = 40.0
 
 ## Derived linear accel (u/s²)
 static func accel_rate() -> float:
@@ -32,31 +32,32 @@ static func decel_rate_sails() -> float:
 
 ## Turning — rate depends on water flow over the rudder (speed).
 ## Near-zero speed: almost no turn (no hydrodynamic force on rudder).
-## Peaks at moderate speed (quarter–cruise) where flow is strong and
-## momentum is manageable, then the turning circle widens at high speed.
-## Historical: a 74-gun 3rd rate manages ~2–3 deg/s at best.
+## Ramps up quickly, then stays high — more water over the rudder means
+## more steering force. The turning CIRCLE widens at speed naturally
+## because radius = speed / angular_velocity, no artificial nerf needed.
 static func turn_rate_deg_for_speed(speed: float) -> float:
 	var s: float = clampf(speed, 0.0, MAX_SPEED * 1.1)
 	# Near-standstill: barely any rudder authority — ship is a floating log.
 	if s <= MIN_SPEED_DRIFT:
 		var t: float = s / maxf(0.001, MIN_SPEED_DRIFT)
-		return lerpf(0.6, 2.5, t)
-	# Low speed → peak turn authority around quarter sail.
+		return lerpf(0.78, 3.25, t)
+	# Low speed → ramp up as water hits the rudder.
 	if s <= QUARTER_SPEED:
 		var t: float = (s - MIN_SPEED_DRIFT) / maxf(0.001, QUARTER_SPEED - MIN_SPEED_DRIFT)
-		return lerpf(2.5, 4.5, t)
-	# Moderate speed: still decent, slight decline as momentum builds.
+		return lerpf(3.25, 5.85, t)
+	# Quarter → max: stays near peak. Rudder has plenty of flow;
+	# the wider turning circle comes from covering more ground, not less rate.
 	if s <= CRUISE_SPEED:
 		var t: float = (s - QUARTER_SPEED) / maxf(0.001, CRUISE_SPEED - QUARTER_SPEED)
-		return lerpf(4.5, 3.5, t)
-	# High speed: turning circle widens — heavy hull carries forward.
+		return lerpf(5.85, 5.6, t)
+	# High speed: very mild dropoff — hull inertia resists slightly.
 	var t2: float = (s - CRUISE_SPEED) / maxf(0.001, MAX_SPEED - CRUISE_SPEED)
-	return lerpf(3.5, 2.2, clampf(t2, 0.0, 1.0))
+	return lerpf(5.6, 5.2, clampf(t2, 0.0, 1.0))
 
 
 ## Rudder / heading inertia (lower = heading catches rudder faster).
 ## 1,600-ton hull has rotational inertia — tuned for responsive gameplay feel.
-const HELM_TURN_LAG_SEC: float = 1.2
+const HELM_TURN_LAG_SEC: float = 1.1
 
 ## Speed at which rudder reaches full steering authority (linear ramp MIN→1).
 ## Need ~3 knots (≈8 u/s) of way on before rudder bites fully.
@@ -85,7 +86,7 @@ static func broadside_quality(angle_from_bow_deg: float) -> float:
 	var t: float = (off_beam - BROADSIDE_QUALITY_FALLOFF_START_DEG) / (BROADSIDE_QUALITY_FALLOFF_END_DEG - BROADSIDE_QUALITY_FALLOFF_START_DEG)
 	return lerpf(1.0, 0.3, t)
 
-const RELOAD_TIME_SEC: float = 12.0
+const RELOAD_TIME_SEC: float = 8.4
 
 ## §4.1 Max engagement (same unit space as wx, wy)
 ## Calibrated to 24-pounder long gun ballistics (410 m/s muzzle velocity, 9.81 g).

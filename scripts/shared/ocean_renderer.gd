@@ -89,6 +89,14 @@ func set_ship_states(states: Array) -> void:
 func set_water_impacts(events: Array) -> void:
 	_water_impacts = events
 
+func set_whirlpool(center: Vector2, radius: float, core_radius: float, enabled: bool) -> void:
+	if _ocean_material == null:
+		return
+	_ocean_material.set_shader_parameter("u_whirlpool_center", center)
+	_ocean_material.set_shader_parameter("u_whirlpool_radius", radius)
+	_ocean_material.set_shader_parameter("u_whirlpool_core_radius", core_radius)
+	_ocean_material.set_shader_parameter("u_whirlpool_enabled", 1.0 if enabled else 0.0)
+
 func update_view(viewport_size: Vector2, origin: Vector2, zoom: float, world_scale: float) -> void:
 	_viewport_size = viewport_size
 	_origin = origin
@@ -101,7 +109,7 @@ func update_view(viewport_size: Vector2, origin: Vector2, zoom: float, world_sca
 	_ocean_material.set_shader_parameter("u_world_scale", _world_scale)
 
 func tick(delta: float) -> void:
-	_elapsed += delta
+	_elapsed = fmod(_elapsed + delta, 200.0)
 	if _ocean_material != null:
 		_ocean_material.set_shader_parameter("u_time", _elapsed)
 	_update_wake_tracks(delta)
@@ -235,6 +243,8 @@ func _draw_wakes(canvas: CanvasItem) -> void:
 			var base_width_b: float = float(older.get("width", 8.0)) * _zoom
 			var wake_alpha: float = 0.11 * minf(newer_t, older_t)
 			var foam_alpha: float = 0.18 * minf(newer_t, older_t)
+			if wake_alpha < 0.001 or (base_width_a < 0.5 and base_width_b < 0.5):
+				continue
 			var outer := PackedVector2Array([
 				a + side * base_width_a,
 				a - side * base_width_a,
@@ -242,13 +252,14 @@ func _draw_wakes(canvas: CanvasItem) -> void:
 				b + side * base_width_b,
 			])
 			canvas.draw_colored_polygon(outer, Color(0.78, 0.90, 0.98, wake_alpha))
-			var inner := PackedVector2Array([
-				a + side * base_width_a * 0.36,
-				a - side * base_width_a * 0.36,
-				b - side * base_width_b * 0.24,
-				b + side * base_width_b * 0.24,
-			])
-			canvas.draw_colored_polygon(inner, Color(0.93, 0.97, 1.0, foam_alpha))
+			if foam_alpha >= 0.001 and base_width_a * 0.24 >= 0.5:
+				var inner := PackedVector2Array([
+					a + side * base_width_a * 0.36,
+					a - side * base_width_a * 0.36,
+					b - side * base_width_b * 0.24,
+					b + side * base_width_b * 0.24,
+				])
+				canvas.draw_colored_polygon(inner, Color(0.93, 0.97, 1.0, foam_alpha))
 		var stern: Dictionary = samples[0]
 		var stern_pos: Vector2 = _world_to_screen(stern.get("world", Vector2.ZERO))
 		var heading: Vector2 = stern.get("heading", Vector2.RIGHT)
@@ -256,7 +267,7 @@ func _draw_wakes(canvas: CanvasItem) -> void:
 			heading = Vector2.RIGHT
 		heading = heading.normalized()
 		var screen_heading: Vector2 = heading
-		var side: Vector2 = Vector2(-screen_heading.y, screen_heading.x).normalized()
+		var stern_side: Vector2 = Vector2(-screen_heading.y, screen_heading.x).normalized()
 		var foam_strength: float = float(stern.get("foam", 0.0))
 		var turn_amount: float = float(stern.get("turn_amount", 0.0))
 		if foam_strength > 0.01:
@@ -266,8 +277,8 @@ func _draw_wakes(canvas: CanvasItem) -> void:
 			canvas.draw_circle(stern_back, foam_radius, Color(0.92, 0.97, 1.0, stern_alpha))
 			if turn_amount > 0.05:
 				var side_offset: float = (8.0 + turn_amount * 14.0) * _zoom
-				canvas.draw_circle(stern_back + side * side_offset * 0.55, foam_radius * 0.72, Color(0.86, 0.95, 1.0, stern_alpha * 0.9))
-				canvas.draw_circle(stern_back - side * side_offset * 0.55, foam_radius * 0.72, Color(0.86, 0.95, 1.0, stern_alpha * 0.9))
+				canvas.draw_circle(stern_back + stern_side * side_offset * 0.55, foam_radius * 0.72, Color(0.86, 0.95, 1.0, stern_alpha * 0.9))
+				canvas.draw_circle(stern_back - stern_side * side_offset * 0.55, foam_radius * 0.72, Color(0.86, 0.95, 1.0, stern_alpha * 0.9))
 
 func _draw_impacts(canvas: CanvasItem) -> void:
 	for event in _water_impacts:

@@ -41,8 +41,8 @@ var max_range: float = 14.0
 var auto_fire_enabled: bool = false
 ## Continuous quoin: 0.0 → −5° depression, 1.0 → +10° elevation (linear).
 ## Used directly by CannonBallistics.initial_velocity(elevation_deg).
-const ELEV_MIN_DEG: float = -3.0
-const ELEV_MAX_DEG: float = 5.0
+const ELEV_MIN_DEG: float = -1.0
+const ELEV_MAX_DEG: float = 4.0
 ## Normalized `cannon_elevation` that yields 0° horizontal bore (default for new batteries).
 const CANNON_ELEVATION_ZERO_DEG: float = (0.0 - ELEV_MIN_DEG) / (ELEV_MAX_DEG - ELEV_MIN_DEG)
 var cannon_elevation: float = CANNON_ELEVATION_ZERO_DEG
