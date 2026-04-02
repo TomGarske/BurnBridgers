@@ -137,19 +137,6 @@ func _turbulence_at(pos: Vector2, time: float) -> Vector2:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  Capture & ejection
-# ═══════════════════════════════════════════════════════════════════════
-
-var capture_duration: float = 3.0
-var eject_speed_multiplier: float = 2.0
-var eject_random_angle_degrees: float = 20.0
-var eject_outward_weight: float = 0.5
-var eject_tangential_weight: float = 0.4
-var eject_random_weight: float = 0.1
-var eject_recovery_duration: float = 1.5
-var eject_immunity_duration: float = 2.0
-
-# ═══════════════════════════════════════════════════════════════════════
 #  Per-ship state
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -189,21 +176,7 @@ class WhirlpoolShipState:
 	var turn_modifier: float = 1.0
 	## Acceleration modifier based on flow alignment.
 	var acceleration_modifier: float = 1.0
-	## Capture state.
-	var is_captured: bool = false
-	var capture_timer: float = 0.0
-	var eject_direction: Vector2 = Vector2.ZERO
-	var eject_speed: float = 0.0
-	var recovery_scalar: float = 1.0
-	## Legacy fields for arena inject_physics.
-	var velocity_influence: Vector2 = Vector2.ZERO
-	var capture_angular_velocity: float = 0.0
-	var radial_strength: float = 0.0
-	var tangential_strength: float = 0.0
-	## Track previous ring for logging.
 	var prev_ring: int = Ring.NONE
-	var eject_immunity_timer: float = 0.0
-	var just_ejected: bool = false
 	var _frame_id: int = -1
 
 
@@ -276,23 +249,6 @@ func _smooth_t(dist: float, outer_r: float, inner_r: float) -> float:
 	return raw * raw * (3.0 - 2.0 * raw)
 
 
-## Full water velocity vector at a world position (tangential + radial inflow).
-func water_velocity_at(pos: Vector2, max_speed: float) -> Vector2:
-	var to_center: Vector2 = center - pos
-	var r: float = to_center.length()
-	if r < 0.01 or r > influence_radius:
-		return Vector2.ZERO
-
-	var radial_inward: Vector2 = to_center / r
-	# CCW tangential: rotate inward direction 90° CCW. In Godot Y-down, that's -PI/2.
-	var tangential: Vector2 = radial_inward.rotated(-PI * 0.5)
-
-	var v_tan: float = water_speed_at_radius(r, max_speed)
-	var v_rad: float = v_tan * inflow_ratio
-
-	return tangential * v_tan + radial_inward * v_rad
-
-
 ## Process whirlpool effects for a single ship. Call EXACTLY ONCE per tick.
 func process_ship(ship_id: int, ship_pos: Vector2, ship_dir: Vector2, ship_speed: float, max_speed: float, delta: float) -> WhirlpoolShipState:
 	var state: WhirlpoolShipState = get_ship_state(ship_id)
@@ -309,27 +265,14 @@ func process_ship(ship_id: int, ship_pos: Vector2, ship_dir: Vector2, ship_speed
 	state.prev_ring = state.ring_type
 	state.ring_type = classify_ring(dist)
 	state.is_in_whirlpool = state.ring_type != Ring.NONE
-	state.just_ejected = false
 
 	# Reset per-tick outputs.
 	state.drag_force = Vector2.ZERO
 	state.water_carry = Vector2.ZERO
 	state.torque = 0.0
-	state.velocity_influence = Vector2.ZERO
-	state.capture_angular_velocity = 0.0
-
-	# Tick eject immunity.
-	if state.eject_immunity_timer > 0.0:
-		state.eject_immunity_timer -= delta
-
-	# Tick post-eject recovery.
-	if state.recovery_scalar < 1.0:
-		state.recovery_scalar = minf(1.0, state.recovery_scalar + delta / maxf(0.01, eject_recovery_duration))
 
 	# ── Outside influence ──
 	if not state.is_in_whirlpool:
-		if state.is_captured:
-			_begin_ejection(state, ship_pos, dist)
 		state.water_velocity = Vector2.ZERO
 		state.water_speed = 0.0
 		state.water_speed_tangential = 0.0
@@ -341,8 +284,6 @@ func process_ship(ship_id: int, ship_pos: Vector2, ship_dir: Vector2, ship_speed
 		state.flow_alignment = 0.0
 		state.turn_modifier = 1.0
 		state.acceleration_modifier = 1.0
-		state.radial_strength = 0.0
-		state.tangential_strength = 0.0
 		return state
 
 	# ── Directional basis ──
@@ -359,34 +300,6 @@ func process_ship(ship_id: int, ship_pos: Vector2, ship_dir: Vector2, ship_speed
 	state.water_speed = water_vel.length()
 	state.water_speed_tangential = v_tan
 	state.water_speed_radial = v_rad
-
-	# Store legacy strengths (as fraction of max_speed) for compatibility.
-	state.tangential_strength = v_tan / maxf(0.01, max_speed)
-	state.radial_strength = v_rad / maxf(0.01, max_speed)
-
-	# ── Capture state ──
-	if state.is_captured:
-		state.capture_timer += delta
-		if state.capture_timer >= capture_duration:
-			_begin_ejection(state, ship_pos, dist)
-			return state
-		var capture_progress: float = state.capture_timer / capture_duration
-		var spin_rate: float = lerpf(2.0, 5.0, capture_progress)
-		state.capture_angular_velocity = -spin_rate  # CCW
-		state.velocity_influence = radial_inward * v_rad * delta
-		state.turn_modifier = min_turn_authority
-		state.acceleration_modifier = 0.3
-		return state
-
-	# ── Enter capture if in core (respects eject immunity) ──
-	if state.ring_type == Ring.CORE and not state.is_captured and state.eject_immunity_timer <= 0.0:
-		state.is_captured = true
-		state.capture_timer = 0.0
-		state.recovery_scalar = 1.0
-		state.velocity_influence = radial_inward * v_rad * delta
-		state.turn_modifier = min_turn_authority
-		state.acceleration_modifier = 0.3
-		return state
 
 	# ── Ship velocity vector ──
 	var ship_dir_n: Vector2 = ship_dir.normalized() if ship_dir.length_squared() > 0.0001 else Vector2.RIGHT
@@ -492,26 +405,3 @@ func get_ai_data(ship_id: int, ship_pos: Vector2, ship_dir: Vector2) -> Dictiona
 		"is_in_core": state.ring_type == Ring.CORE or state.is_captured,
 		"slingshot_alignment_score": slingshot_score,
 	}
-
-
-# ═══════════════════════════════════════════════════════════════════════
-#  Internals
-# ═══════════════════════════════════════════════════════════════════════
-
-func _begin_ejection(state: WhirlpoolShipState, ship_pos: Vector2, dist: float) -> void:
-	var outward: Vector2 = (ship_pos - center).normalized() if dist > 0.01 else Vector2.RIGHT
-	var tangential: Vector2 = outward.rotated(-PI * 0.5)
-	var random_angle: float = deg_to_rad(randf_range(-eject_random_angle_degrees, eject_random_angle_degrees))
-	var random_dir: Vector2 = outward.rotated(random_angle)
-	var eject_dir: Vector2 = (
-		outward * eject_outward_weight +
-		tangential * eject_tangential_weight +
-		random_dir * eject_random_weight
-	).normalized()
-	state.eject_direction = eject_dir
-	state.eject_speed = eject_speed_multiplier
-	state.is_captured = false
-	state.capture_timer = 0.0
-	state.recovery_scalar = 0.0
-	state.eject_immunity_timer = eject_immunity_duration
-	state.just_ejected = true

@@ -625,10 +625,6 @@ func draw_all() -> void:
 	for p in sorted:
 		draw_player(p)
 
-	if OS.is_debug_build() and a.combat_debug_world_draw:
-		draw_combat_debug_world_overlays()
-	if a.whirlpool_debug_draw:
-		draw_whirlpool_debug()
 
 	draw_muzzle_fx()
 	if a._fade_path_line > 0.01:
@@ -650,56 +646,6 @@ func draw_all() -> void:
 		draw_win_screen(vp)
 	if Input.is_action_pressed(a.SCOREBOARD_ACTION) or a._match_over:
 		draw_scoreboard(vp)
-
-
-# ── Combat debug world overlays ──────────────────────────────────────
-
-func draw_combat_debug_world_overlays() -> void:
-	if a._bot_controllers.is_empty() or a._bot_indices.is_empty():
-		return
-	var ctrl: Variant = a._bot_controllers[0]
-	if ctrl == null or ctrl.agent == null:
-		return
-	var bot_dict: Dictionary = ctrl.agent.ship_dict
-	if bot_dict.is_empty() or not bool(bot_dict.get("alive", false)):
-		return
-	var tgt: Dictionary = ctrl.target_dict
-	if tgt.is_empty() or not bool(tgt.get("alive", false)):
-		return
-	var bpos: Vector2 = Vector2(float(bot_dict.wx), float(bot_dict.wy))
-	var tpos: Vector2 = Vector2(float(tgt.wx), float(tgt.wy))
-	var sb: Vector2 = _w2s(bpos.x, bpos.y)
-	var st: Vector2 = _w2s(tpos.x, tpos.y)
-	a.draw_line(sb, st, Color(1.0, 0.45, 0.2, 0.75), 2.0 * a._zoom)
-	var hull: Vector2 = Vector2(float(bot_dict.dir.x), float(bot_dict.dir.y))
-	if hull.length_squared() < 0.0001:
-		hull = Vector2.RIGHT
-	hull = hull.normalized()
-	var fwd_len: float = 55.0 * a._zoom
-	a.draw_line(sb, sb + _dir_screen(hull.x, hull.y) * fwd_len, Color(0.35, 0.9, 1.0, 0.85), 2.2 * a._zoom)
-	var br: Dictionary = ctrl.broadside_result
-	var side: String = str(br.get("best_side", "none"))
-	var to_t: Vector2 = (tpos - bpos)
-	if to_t.length_squared() > 0.01:
-		to_t = to_t.normalized()
-		var want: Vector2 = to_t.rotated(-PI * 0.5) if side == "port" else to_t.rotated(PI * 0.5)
-		if side == "none":
-			want = to_t.rotated(PI * 0.5)
-		a.draw_line(sb, sb + _dir_screen(want.x, want.y) * fwd_len * 0.9, Color(0.45, 1.0, 0.55, 0.75), 2.0 * a._zoom)
-	var half_arc: float = deg_to_rad(NC.BROADSIDE_HALF_ARC_DEG)
-	var perp: Vector2 = hull.rotated(PI * 0.5) if side != "starboard" else hull.rotated(-PI * 0.5)
-	var L: float = 62.0 * a._zoom
-	var a0: Vector2 = perp.rotated(-half_arc)
-	var a1: Vector2 = perp.rotated(half_arc)
-	a.draw_line(sb, sb + _dir_screen(a0.x, a0.y) * L, Color(0.95, 0.85, 0.25, 0.5), 1.8 * a._zoom)
-	a.draw_line(sb, sb + _dir_screen(a1.x, a1.y) * L, Color(0.95, 0.85, 0.25, 0.5), 1.8 * a._zoom)
-	# Engagement bands around target (NavalCombatEvaluator band tuning).
-	draw_world_range_ring(tpos, NavalCombatEvaluator.BAND_TOO_CLOSE, Color(1.0, 0.25, 0.35, 0.45), 1.4)
-	var pc: float = NavalCombatEvaluator.BAND_PREFERRED_CENTER
-	var tol: float = NavalCombatEvaluator.BAND_PREFERRED_TOLERANCE
-	draw_world_range_ring(tpos, pc - tol, Color(0.35, 0.85, 1.0, 0.38), 1.2)
-	draw_world_range_ring(tpos, pc + tol, Color(0.35, 0.85, 1.0, 0.38), 1.2)
-	draw_world_range_ring(tpos, NavalCombatEvaluator.BAND_MAX_PRACTICAL, Color(0.75, 0.35, 1.0, 0.42), 1.4)
 
 
 # ── Off-screen indicators ───────────────────────────────────────────
@@ -1754,21 +1700,6 @@ func draw_whirlpool_visuals() -> void:
 		a.draw_line(p1, p2, streak_col, 1.0 + speed_frac * 1.2)
 
 
-	# ── Core vortex — spinning spiral arms ──
-	var spin_angle: float = t * 2.5  # CW in math = CCW visual (Y-down)
-	for arm in range(4):
-		var arm_base: float = spin_angle + float(arm) * TAU / 4.0
-		# Spiral: radius increases as angle increases.
-		var seg_pts: PackedVector2Array = PackedVector2Array()
-		var seg_count: int = 12
-		for si in range(seg_count + 1):
-			var st: float = float(si) / float(seg_count)
-			var sr: float = core_r * (0.15 + st * 0.85)
-			var sa: float = arm_base + st * 1.2  # 1.2 rad of spiral per arm
-			seg_pts.append(sc + Vector2(cos(sa), sin(sa)) * sr)
-		if seg_pts.size() > 1:
-			a.draw_polyline(seg_pts, Color(0.85, 0.25, 0.15, 0.25 + sin(t * 3.0 + float(arm)) * 0.08), 1.8)
-
 
 ## Draw a ring as a polyline circle.
 func draw_whirlpool_ring_arc(center_s: Vector2, radius: float, color: Color, width: float) -> void:
@@ -1781,79 +1712,3 @@ func draw_whirlpool_ring_arc(center_s: Vector2, radius: float, color: Color, wid
 		var angle: float = (float(i) / float(seg_count)) * TAU
 		points[i] = center_s + Vector2(cos(angle), sin(angle)) * radius
 	a.draw_polyline(points, color, width, true)
-
-
-## Debug overlay: ring boundaries, per-ship vectors, and telemetry text.
-func draw_whirlpool_debug() -> void:
-	if a._whirlpool == null:
-		return
-
-	var wc: Vector2 = a._whirlpool.center
-	var sc: Vector2 = _w2s(wc.x, wc.y)
-	var wp_scale: float = a._TD_SCALE * a._zoom
-	var font: Font = ThemeDB.fallback_font
-
-	# ── Disruption level ──
-	var disrupt_pct: float = a._whirlpool.disruption * 100.0
-	var disrupt_col: Color = Color.WHITE.lerp(Color.RED, a._whirlpool.disruption)
-	a.draw_string(font, sc + Vector2(-60.0, -(a._whirlpool.influence_radius * wp_scale + 18.0)),
-		"DISRUPTION: %.0f%%" % disrupt_pct,
-		HORIZONTAL_ALIGNMENT_CENTER, -1, 11, disrupt_col)
-
-
-	# ── Per-ship debug info ──
-	for p in a._players:
-		if not bool(p.get("alive", false)):
-			continue
-		var ship_id: int = int(p.get("peer_id", 0))
-		var ws: a._WhirlpoolController.WhirlpoolShipState = a._whirlpool.get_ship_state(ship_id)
-		if not ws.is_in_whirlpool and not ws.is_captured:
-			continue
-
-		var sp: Vector2 = _w2s(float(p.wx), float(p.wy))
-
-		# Vector to center.
-		a.draw_line(sp, sc, Color(1.0, 1.0, 0.0, 0.3), 1.0)
-
-		# Water velocity arrow (blue — shows current direction and strength).
-		if ws.water_velocity.length_squared() > 0.01:
-			var water_end: Vector2 = sp + ws.water_velocity.normalized() * clampf(ws.water_speed * 3.0, 10.0, 80.0)
-			a.draw_line(sp, water_end, Color(0.2, 0.5, 1.0, 0.7), 2.5)
-
-		# Ship velocity arrow (green).
-		var ship_dir_v: Vector2 = Vector2(float(p.dir.x), float(p.dir.y)).normalized()
-		var ship_spd: float = float(p.get("move_speed", 0.0))
-		if ship_spd > 0.5:
-			var ship_end: Vector2 = sp + ship_dir_v * clampf(ship_spd * 3.0, 10.0, 80.0)
-			a.draw_line(sp, ship_end, Color(0.2, 0.9, 0.3, 0.5), 1.5)
-
-		# Drag force arrow (red — shows net force on ship).
-		if ws.drag_force.length_squared() > 0.01:
-			var drag_end: Vector2 = sp + ws.drag_force.normalized() * clampf(ws.drag_force.length() * 5.0, 5.0, 60.0)
-			a.draw_line(sp, drag_end, Color(1.0, 0.3, 0.2, 0.6), 2.0)
-
-		# Ejection preview if captured.
-		if ws.is_captured:
-			var eject_preview: Vector2 = sp + ws.eject_direction * 50.0 if ws.eject_direction.length_squared() > 0.0001 else sp
-			a.draw_line(sp, eject_preview, Color(1.0, 0.2, 0.1, 0.8), 2.4)
-
-		# Text telemetry.
-		var y_off: float = -80.0
-		var txt_col: Color = Color.WHITE
-		var lines: Array = [
-			"Ring: %s  Dist: %.0f" % [a._WhirlpoolController.ring_name(ws.ring_type), ws.distance_to_center],
-			"Water: %.1f (tan=%.1f rad=%.1f)" % [ws.water_speed, ws.water_speed_tangential, ws.water_speed_radial],
-			"Ship spd: %.1f  v_lat: %.1f" % [ship_spd, ws.v_lateral],
-			"Drag: %.2f  Torque: %.3f rad/s" % [ws.drag_force.length(), ws.torque],
-			"Turn auth: %.2f  Accel mod: %.2f" % [ws.turn_modifier, ws.acceleration_modifier],
-			"Flow align: %.2f" % ws.flow_alignment,
-		]
-		if ws.is_captured:
-			lines.append("CAPTURED  t=%.1f/%.1f" % [ws.capture_timer, a._whirlpool.capture_duration])
-		if ws.eject_immunity_timer > 0.0:
-			lines.append("Immunity: %.1fs" % ws.eject_immunity_timer)
-		if ws.recovery_scalar < 1.0:
-			lines.append("Recovery: %.0f%%" % (ws.recovery_scalar * 100.0))
-		for line in lines:
-			a.draw_string(font, sp + Vector2(20.0, y_off), line, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, txt_col)
-			y_off += 12.0

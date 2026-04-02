@@ -3111,20 +3111,6 @@ func _draw_whirlpool_visuals() -> void:
 		draw_line(p1, p2, streak_col, 1.0 + speed_frac * 1.2)
 
 
-	# ── Core vortex — spinning spiral arms ──
-	var spin_angle: float = t * 2.5  # CW in math = CCW visual (Y-down)
-	for arm in range(4):
-		var arm_base: float = spin_angle + float(arm) * TAU / 4.0
-		# Spiral: radius increases as angle increases.
-		var seg_pts: PackedVector2Array = PackedVector2Array()
-		var seg_count: int = 12
-		for si in range(seg_count + 1):
-			var st: float = float(si) / float(seg_count)
-			var sr: float = core_r * (0.15 + st * 0.85)
-			var sa: float = arm_base + st * 1.2  # 1.2 rad of spiral per arm
-			seg_pts.append(sc + Vector2(cos(sa), sin(sa)) * sr)
-		if seg_pts.size() > 1:
-			draw_polyline(seg_pts, Color(0.85, 0.25, 0.15, 0.25 + sin(t * 3.0 + float(arm)) * 0.08), 1.8)
 
 
 ## Draw a ring as a polyline circle.
