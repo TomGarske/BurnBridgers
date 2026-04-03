@@ -207,6 +207,8 @@ func _ready() -> void:
 	_sound = IronwakeSound.new()
 	_sound.init(self)
 	_sound.start_ocean_ambient()
+	if MusicPlayer != null:
+		MusicPlayer.play_song(MusicPlayer.DEFAULT_ARENA_SONG)
 	_ramming = IronwakeRamming.new()
 	_ramming.init(self)
 	_proj = IronwakeProjectiles.new()
@@ -1733,6 +1735,8 @@ func _draw_win_screen(vp: Vector2) -> void:
 func _return_to_menu() -> void:
 	GameManager.set_match_phase(GameManager.MatchPhase.LOBBY)
 	_sound.stop_ocean_ambient()
+	if MusicPlayer != null:
+		MusicPlayer.play_song(MusicPlayer.DEFAULT_MENU_SONG)
 	# Clean up Steam lobby (this also closes multiplayer peer).
 	if SteamManager != null:
 		SteamManager.leave_lobby()
