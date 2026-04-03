@@ -39,6 +39,8 @@ var reload_timer: float = 0.0
 var firing_arc_degrees: float = 50.0
 var max_range: float = 14.0
 var auto_fire_enabled: bool = false
+## Crew manning multiplier: scales reload speed. Set by arena from CrewController efficiency.
+var crew_reload_mult: float = 1.0
 ## Continuous quoin: 0.0 → −5° depression, 1.0 → +10° elevation (linear).
 ## Used directly by CannonBallistics.initial_velocity(elevation_deg).
 const ELEV_MIN_DEG: float = -0.3
@@ -117,7 +119,7 @@ func process_frame(delta: float, hull_dir: Vector2, aim_dir: Vector2, _ship_pos:
 		return out
 
 	if state == BatteryState.RELOADING:
-		reload_timer -= delta
+		reload_timer -= delta * crew_reload_mult
 		if reload_timer <= 0.0:
 			reload_timer = 0.0
 			reload_complete.emit(side)
