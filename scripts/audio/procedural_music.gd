@@ -398,9 +398,9 @@ func _tick() -> void:
 		# Update arp filter for new phase
 		var filter_hz: float = float(_phase_filter_hz.get(str(ph["id"]), 700.0))
 		arp.set_filter_cutoff(filter_hz)
-		phase_changed.emit(str(ph["id"]), str(ph["label"]))
+		call_deferred("emit_signal", "phase_changed", str(ph["id"]), str(ph["label"]))
 
-	beat_fired.emit(bar_idx, str(ph.get("id", "")))
+	call_deferred("emit_signal", "beat_fired", bar_idx, str(ph.get("id", "")))
 
 	# ── Arp layer ──
 	var freq: float = float(ph_arp[idx]) if idx < ph_arp.size() else 0.0
@@ -423,7 +423,7 @@ func _tick() -> void:
 			if seq.size() > 0:
 				var chord_name: String = str(seq[_piano_bar_count % seq.size()])
 				_last_played_chord = _resolve_chord(chord_name)
-				chord_changed.emit(chord_name)
+				call_deferred("emit_signal", "chord_changed", chord_name)
 
 				# Bass root on beat 1
 				if not _last_played_chord.is_empty():

@@ -2013,18 +2013,17 @@ func _draw_hud(vp: Vector2) -> void:
 		draw_string(font, Vector2(pad, 70.0 + float(i) * 16.0),
 			str(entry.get("text", "")), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, _HUD_TEXT)
 
-	# Player tags — compact bars along the left and right edges.
+	# Player tags — compact bars across the top.
 	var tag_w: float = 120.0
 	var tag_h: float = 14.0
-	var tag_gap: float = 4.0
-	var tag_start_y: float = 80.0
-	var half: int = ceili(_players.size() / 2.0)
+	var tag_gap: float = 6.0
+	var total_tags_w: float = float(_players.size()) * tag_w + float(maxi(_players.size() - 1, 0)) * tag_gap
+	var tag_start_x: float = (vp.x - total_tags_w) * 0.5
+	var tag_y: float = 60.0
 	for i in range(_players.size()):
 		var p: Dictionary = _players[i]
-		var on_left: bool = i < half
-		var slot: int = i if on_left else i - half
-		var tx: float = pad if on_left else vp.x - tag_w - pad
-		var ty: float = tag_start_y + float(slot) * (tag_h + tag_gap)
+		var tx: float = tag_start_x + float(i) * (tag_w + tag_gap)
+		var ty: float = tag_y
 		var hp_frac: float = clampf(float(p.health) / _hull_max(p), 0.0, 1.0)
 		var col: Color = p.palette[0]
 		draw_rect(Rect2(tx, ty, tag_w, tag_h), _HUD_BG)
