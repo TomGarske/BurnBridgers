@@ -6,7 +6,7 @@ extends Node
 const ProceduralMusicScript := preload("res://scripts/audio/procedural_music.gd")
 
 const DEFAULT_MENU_SONG := "spanish-ladies"
-const DEFAULT_ARENA_SONG := "haul-away-joe"
+const DEFAULT_ARENA_SONG := "spanish-ladies"
 const PRESET_DIR := "res://presets/"
 
 ## Available songs loaded from manifest.json — array of {id, name}

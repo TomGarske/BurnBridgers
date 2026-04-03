@@ -13,7 +13,16 @@ signal chord_changed(name: String)
 signal beat_fired(step: int, phase_id: String)
 
 const SAMPLE_RATE := 44100.0
-const BUFFER_SIZE := 4096  # frames to push per _process (large enough for low FPS)
+const BUFFER_SIZE := 4096  # max frames to push per _process
+const RING_SIZE := 16384  # ring buffer capacity (samples, ~0.37s at 44.1kHz)
+
+# ── Thread ──
+var _thread: Thread = null
+var _mutex: Mutex = Mutex.new()
+var _ring: PackedFloat32Array = PackedFloat32Array()
+var _ring_write: int = 0
+var _ring_read: int = 0
+var _thread_running: bool = false
 
 # ── Layers ──
 var arp: ArpLayer
@@ -488,46 +497,92 @@ func _tick() -> void:
 func _process(_delta: float) -> void:
 	if not _playing or _playback == null:
 		return
-
 	var frames_available := _playback.get_frames_available()
 	if frames_available <= 0:
 		return
+	var frames_to_push := mini(frames_available, BUFFER_SIZE)
+	_mutex.lock()
+	var avail := (_ring_write - _ring_read + RING_SIZE) % RING_SIZE
+	frames_to_push = mini(frames_to_push, avail)
+	for _i in range(frames_to_push):
+		var s: float = _ring[_ring_read]
+		_ring_read = (_ring_read + 1) % RING_SIZE
+		_playback.push_frame(Vector2(s, s))
+	_mutex.unlock()
 
-	var frames_to_fill := mini(frames_available, BUFFER_SIZE)
-	var s16_dur := _s16_samples()
 
-	for _i in range(frames_to_fill):
-		# Fire tick at 16th note boundaries
-		if _sample_pos >= _next_tick_sample:
-			_tick()
-			_next_tick_sample = _sample_pos + s16_dur
+## Background thread: continuously generates samples into the ring buffer.
+func _audio_thread_func() -> void:
+	while _thread_running:
+		_mutex.lock()
+		var avail := (_ring_write - _ring_read + RING_SIZE) % RING_SIZE
+		var free_space := RING_SIZE - 1 - avail
+		_mutex.unlock()
 
-		# Generate one sample from all layers
-		var sample := 0.0
-		sample += arp.next_sample()
-		sample += thump.next_sample()
-		sample += piano_layer.next_sample()
-		sample += pad.next_sample() * lv_gain("pad")
-		sample += bass.next_sample() * lv_gain("bass")
-		sample += drone.next_sample()
-		sample += voice_bass.next_sample()
-		sample += voice_baritone.next_sample()
-		sample += voice_tenor.next_sample()
+		if free_space < 256:
+			OS.delay_usec(500)
+			continue
 
-		# Mix down (9 layers summing) then master volume and soft clip
-		sample *= 0.55 * _volume_to_gain()
-		sample = _soft_clip(sample)
+		# Generate a chunk of samples (no mutex needed for synthesis itself)
+		var chunk_size := mini(free_space, 1024)
+		var chunk := PackedFloat32Array()
+		chunk.resize(chunk_size)
+		var s16_dur := _s16_samples()
 
-		_playback.push_frame(Vector2(sample, sample))
-		_sample_pos += 1
+		for ci in range(chunk_size):
+			if _sample_pos >= _next_tick_sample:
+				_tick()
+				_next_tick_sample = _sample_pos + s16_dur
 
-		# Wrap around at end of timeline
-		if _scripted_total_samples > 0 and _sample_pos >= _scripted_total_samples:
-			_sample_pos = 0
-			_step = 0
-			_piano_bar_count = 0
-			_next_tick_sample = 0
-			_last_played_chord = {}
+			var sample := 0.0
+			sample += arp.next_sample()
+			sample += thump.next_sample()
+			sample += piano_layer.next_sample()
+			sample += pad.next_sample() * lv_gain("pad")
+			sample += bass.next_sample() * lv_gain("bass")
+			sample += drone.next_sample()
+			sample += voice_bass.next_sample()
+			sample += voice_baritone.next_sample()
+			sample += voice_tenor.next_sample()
+
+			sample *= 0.55 * _volume_to_gain()
+			sample = _soft_clip(sample)
+			chunk[ci] = sample
+			_sample_pos += 1
+
+			if _scripted_total_samples > 0 and _sample_pos >= _scripted_total_samples:
+				_sample_pos = 0
+				_step = 0
+				_piano_bar_count = 0
+				_next_tick_sample = 0
+				_last_played_chord = {}
+
+		# Write the chunk into the ring buffer
+		_mutex.lock()
+		for ci in range(chunk_size):
+			_ring[_ring_write] = chunk[ci]
+			_ring_write = (_ring_write + 1) % RING_SIZE
+		_mutex.unlock()
+
+
+func _start_thread() -> void:
+	if _thread != null:
+		return
+	_ring.resize(RING_SIZE)
+	_ring.fill(0.0)
+	_ring_write = 0
+	_ring_read = 0
+	_thread_running = true
+	_thread = Thread.new()
+	_thread.start(_audio_thread_func)
+
+
+func _stop_thread() -> void:
+	if _thread == null:
+		return
+	_thread_running = false
+	_thread.wait_to_finish()
+	_thread = null
 
 
 func lv_gain(layer_name: String) -> float:
@@ -556,6 +611,8 @@ func _soft_clip(x: float) -> float:
 func play_music() -> void:
 	if _playing:
 		return
+	# Stop any existing thread
+	_stop_thread()
 	# Reset all layers to clear any stale voices
 	_init_layers()
 	# Re-apply current preset configs so layers aren't default
@@ -590,12 +647,20 @@ func play_music() -> void:
 	if _playback:
 		for _j in range(512):
 			_playback.push_frame(Vector2.ZERO)
+	# Start background audio generation thread
+	_start_thread()
 
 
 func stop_music() -> void:
 	_playing = false
+	_stop_thread()
 	stop()
 	_playback = null
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		_stop_thread()
 
 
 func set_bpm(new_bpm: float) -> void:
