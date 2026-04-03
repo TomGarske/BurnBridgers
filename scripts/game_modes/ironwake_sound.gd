@@ -202,7 +202,7 @@ func start_ocean_ambient() -> void:
 	_ambient_player.name = "OceanAmbient"
 	arena.add_child(_ambient_player)
 
-	var vol: float = _sfx_scale() * 0.12
+	var vol: float = _sfx_scale() * 0.05
 	var mix_rate: int = 22050  # Lower sample rate is fine for ambient noise.
 	var loop_sec: float = 3.0
 	var sample_count: int = int(loop_sec * float(mix_rate))
