@@ -1,14 +1,15 @@
-# Steam Playtest CI/CD
+# Ironwake — Steam Playtest CI/CD
 
-This repository includes a GitHub Actions workflow that exports a Windows build and uploads it to Steam whenever `main` is updated.
+This repository includes GitHub Actions workflows that export a **Windows** **Ironwake** build (`Ironwake.exe`) and upload it to Steam whenever `main` is updated.
 
 ## Workflow
 
-- Build file: `.github/workflows/steam-playtest.yml`
-- Upload file: `.github/workflows/steam-upload.yml`
+- Build: `.github/workflows/steam-playtest.yml` (workflow name: **Ironwake Steam Build (Windows)**)
+- Upload: `.github/workflows/steam-upload.yml` (workflow name: **Ironwake Steam Upload**)
 - Triggers:
   - Build on push to `main`
   - Upload on successful build completion (`workflow_run`)
+- Build artifact name: `ironwake-windows-steam-build`
 
 ## Required GitHub Secrets
 

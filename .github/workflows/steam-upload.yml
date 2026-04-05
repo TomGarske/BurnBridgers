@@ -1,8 +1,8 @@
-name: Upload to Steam
+name: Ironwake Steam Upload
 
 on:
   workflow_run:
-    workflows: ["Build Steam Playtest"]
+    workflows: ["Ironwake Steam Build (Windows)"]
     types: [completed]
 
 jobs:
@@ -29,7 +29,7 @@ jobs:
         run: |
           $runId = "${{ github.event.workflow_run.id }}"
           Write-Host "Downloading artifact from build run $runId..."
-          gh run download $runId --name steam-playtest-windows --dir build/windows/
+          gh run download $runId --name ironwake-windows-steam-build --dir build/windows/
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
