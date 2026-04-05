@@ -103,7 +103,7 @@ New-Item -ItemType Directory -Path $generatedDir -Force | Out-Null
 $generatedAppBuild = Join-Path $generatedDir "app_build.vdf"
 $generatedDepotBuild = Join-Path $generatedDir "depot_build_windows.vdf"
 
-$description = "GitHub Actions build $($env:GITHUB_RUN_NUMBER) - $($env:GITHUB_SHA)"
+$description = "Ironwake - GitHub Actions #$($env:GITHUB_RUN_NUMBER) $($env:GITHUB_SHA)"
 
 $appBuildText = Get-Content $templateAppBuild -Raw
 $appBuildText = $appBuildText.Replace("__APP_ID__", $steamAppId)

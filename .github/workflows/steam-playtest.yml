@@ -1,4 +1,4 @@
-name: Build Steam Playtest
+name: Ironwake Steam Build (Windows)
 
 on:
   push:
@@ -51,6 +51,6 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: steam-playtest-windows
+          name: ironwake-windows-steam-build
           path: build/windows/
           retention-days: 7
