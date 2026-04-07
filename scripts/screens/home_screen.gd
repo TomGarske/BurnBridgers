@@ -329,6 +329,9 @@ func _on_test_button_pressed() -> void:
 		multiplayer.multiplayer_peer.close()
 		multiplayer.multiplayer_peer = null
 	GameManager.setup_offline_test()
+	# Default to Fleet Battle for solo testing (must be after setup_offline_test
+	# which resets the mode to default).  Set directly since RPC is unavailable offline.
+	GameManager.selected_game_mode_id = "fleet_battle"
 	var mode: Dictionary = GameManager.get_selected_game_mode()
 	var test_scene_path: String = str(mode.get("scene_path", GameManager.MATCH_SCENE_PATH))
 	get_tree().change_scene_to_file(test_scene_path)

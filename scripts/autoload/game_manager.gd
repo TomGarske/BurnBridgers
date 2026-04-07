@@ -6,6 +6,7 @@ extends Node
 enum MatchPhase { LOBBY, IN_MATCH, GAME_OVER }
 const MATCH_SCENE_PATH: String = "res://scenes/game/ironwake/ironwake_arena.tscn"
 const IRONWAKE_SCENE_PATH: String = "res://scenes/game/ironwake/ironwake_arena.tscn"
+const FLEET_SCENE_PATH: String = "res://scenes/game/ironwake/ironwake_fleet_arena.tscn"
 const HOME_SCREEN_SCENE_PATH: String = "res://scenes/screens/home_screen.tscn"
 const LOBBY_SCENE_PATH: String = "res://scenes/screens/lobby.tscn"
 const DEFAULT_GAME_MODE_ID: String = "ironwake"
@@ -16,6 +17,7 @@ const DEFAULT_MUSIC_PROFILE: Dictionary = {
 }
 const MODE_MUSIC_PROFILES: Dictionary = {
 	"ironwake": {"intensity": 1.05, "speed": 0.95, "tone": 0.96},
+	"fleet_battle": {"intensity": 1.15, "speed": 0.90, "tone": 0.92},
 }
 const GAME_MODES: Array[Dictionary] = [
 	{
@@ -25,6 +27,15 @@ const GAME_MODES: Array[Dictionary] = [
 		"badge": "[NAVAL]",
 		"scene_path": IRONWAKE_SCENE_PATH,
 		"description": "Command a 74-gun third-rate warship in age-of-sail naval combat. Helm, sail, and battery controls with realistic ballistics.",
+		"enabled": true,
+	},
+	{
+		"id": "fleet_battle",
+		"label": "Fleet Battle",
+		"subtitle": "PVE Fleet Combat",
+		"badge": "[FLEET]",
+		"scene_path": FLEET_SCENE_PATH,
+		"description": "Command a fleet of 5 ships against enemy fleets. Captain your flagship and issue orders to wingmen.",
 		"enabled": true,
 	},
 ]

@@ -19,6 +19,8 @@ const _NavalShipWeight := preload("res://scripts/shared/naval_ship_weight.gd")
 const _DamageStateController := preload("res://scripts/shared/damage_state_controller.gd")
 const _ShipLayout := preload("res://scripts/shared/ship_layout.gd")
 const _ShipRoom := preload("res://scripts/shared/ship_room.gd")
+const _FleetRegistry := preload("res://scripts/shared/fleet_registry.gd")
+const _WinCondition := preload("res://scripts/shared/win_condition.gd")
 
 ## Emitted when local ship linear motion classification or turn flags change (req-motion-fsm §9).
 signal motion_state_changed(prev_linear: int, new_linear: int, is_turning: bool, is_turning_hard: bool)
@@ -80,6 +82,13 @@ var _post_match_ready: bool = false
 const KILL_TARGET: int = 10
 const MATCH_TIME_LIMIT: float = 300.0  # 5 minutes
 var _match_timer: float = 0.0
+## Pluggable win condition — defaults to PVP kill-race.  Subclasses (fleet arena)
+## swap this for PveEliminationWin at init time.
+var _win_condition: WinCondition = null
+## Fleet / team registry.  Empty by default (PVP: every ship hostile to everyone).
+var _fleet_registry: FleetRegistry = null
+## When true, scroll-wheel zoom is free and battery auto-zoom is disabled.
+var _camera_zoom_independent: bool = false
 var _warned_30s: bool = false
 var _warned_10s: bool = false
 var _crew_overlay_visible: bool = false
@@ -120,6 +129,9 @@ const SAIL_RAISE_ACTION: String = "bf_sail_raise"
 const SAIL_LOWER_ACTION: String = "bf_sail_lower"
 const BROADSIDE_PORT_ACTION: String = "bf_broadside_port"
 const BROADSIDE_STBD_ACTION: String = "bf_broadside_stbd"
+## Battery cycling order for Q/E: Port → Bow → Starboard → Stern (clockwise).
+const BATTERY_CYCLE_KEYS: Array[String] = ["battery_port", "battery_bow", "battery_stbd", "battery_stern"]
+const BATTERY_CYCLE_COUNT: int = 4
 const FIRE_MODE_ACTION: String = "bf_fire_mode"
 const WHEEL_LOCK_ACTION: String = "bf_wheel_lock"
 const ELEV_UP_ACTION: String = "bf_elev_up"
@@ -241,6 +253,13 @@ func _ready() -> void:
 	_muzzle_smoke_fx = _proj.muzzle_smoke_fx
 	_wp_helper = IronwakeWhirlpool.new()
 	_wp_helper.init(self)
+	# Fleet registry + win condition — defaults preserve PVP behaviour.
+	_fleet_registry = FleetRegistry.new()
+	if _win_condition == null:
+		var pvp_win := WinCondition.PvpKillWin.new()
+		pvp_win.kill_target = KILL_TARGET
+		pvp_win.match_time_limit = MATCH_TIME_LIMIT
+		_win_condition = pvp_win
 	super._ready()
 	_ensure_ocean_renderer()
 	_init_ironwake_movement_state()
@@ -279,8 +298,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			_return_to_menu()
 			return
 	if event is InputEventMouseButton:
-		# Consume scroll wheel — zoom is driven entirely by battery ballistics.
+		# When zoom-independent mode is active, scroll wheel adjusts zoom freely.
+		# Otherwise zoom is driven entirely by battery ballistics (legacy PVP).
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP or event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			if _camera_zoom_independent and event.pressed:
+				var factor: float = 1.15 if event.button_index == MOUSE_BUTTON_WHEEL_UP else (1.0 / 1.15)
+				_zoom_target = clampf(_zoom_target * factor, _ZOOM_MIN, _ZOOM_MAX)
 			return
 		if event.pressed:
 			if event.button_index == MOUSE_BUTTON_MIDDLE:
@@ -369,7 +392,7 @@ func _apply_naval_controllers_to_ship(p: Dictionary) -> void:
 	p["move_speed"] = NC.QUARTER_SPEED
 	p["angular_velocity"] = 0.0
 	p["aim_port_active"] = true
-	p["aim_stbd_active"] = true
+	p["aim_stbd_active"] = false
 	p["aim_dir"] = Vector2(p.dir.x, p.dir.y)
 	var motion: _MotionStateResolver = _MotionStateResolver.new()
 	motion.max_speed_ref = class_max_speed
@@ -403,6 +426,34 @@ func _apply_naval_controllers_to_ship(p: Dictionary) -> void:
 	bat_s.max_range = NC.MAX_CANNON_RANGE
 	bat_s.fire_mode = _BatteryController.FireMode.RIPPLE
 	p["battery_stbd"] = bat_s
+	# Chase guns (bow / stern) — smaller batteries with narrow forward/aft arcs.
+	var chase_count: int = int(cfg.get("chase_cannon_count", 2))
+	var chase_dmg: float = float(cfg.get("chase_damage", 15.0))
+	var chase_arc: float = float(cfg.get("chase_arc_degrees", 20.0))
+	var chase_reload: float = float(cfg.get("chase_reload_time", 8.0))
+	var chase_seq: float = float(cfg.get("chase_fire_sequence_duration", 1.5))
+	var bat_bow: _BatteryController = _BatteryController.new()
+	bat_bow.side = _BatteryController.BatterySide.FORWARD
+	bat_bow.cannon_count = chase_count
+	bat_bow.reload_time = chase_reload
+	bat_bow.fire_sequence_duration = chase_seq
+	bat_bow.battery_damage = chase_dmg
+	bat_bow.firing_arc_degrees = chase_arc
+	bat_bow.max_range = NC.MAX_CANNON_RANGE
+	bat_bow.fire_mode = _BatteryController.FireMode.RIPPLE
+	p["battery_bow"] = bat_bow
+	var bat_stern: _BatteryController = _BatteryController.new()
+	bat_stern.side = _BatteryController.BatterySide.AFT
+	bat_stern.cannon_count = chase_count
+	bat_stern.reload_time = chase_reload
+	bat_stern.fire_sequence_duration = chase_seq
+	bat_stern.battery_damage = chase_dmg
+	bat_stern.firing_arc_degrees = chase_arc
+	bat_stern.max_range = NC.MAX_CANNON_RANGE
+	bat_stern.fire_mode = _BatteryController.FireMode.RIPPLE
+	p["battery_stern"] = bat_stern
+	## Active battery index for Q/E cycling: 0=Port, 1=Bow, 2=Starboard, 3=Stern
+	p["active_battery_index"] = 0
 	p["helm_state_prev"] = -1
 	var ship_class_id: int = int(cfg.get("ship_class", _ShipClassConfig.ShipClass.BRIG))
 	var ship_layout := _ShipLayout.build(ship_class_id)
@@ -418,6 +469,8 @@ func _apply_naval_controllers_to_ship(p: Dictionary) -> void:
 	p["damage_state"] = dmg_state
 	bat_p.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_p, s, ns))
 	bat_s.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_s, s, ns))
+	bat_bow.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_bow, s, ns))
+	bat_stern.battery_state_changed.connect(func(s, ns): _forward_battery_state(bat_stern, s, ns))
 
 
 func _forward_battery_state(bat: _BatteryController, _side: _BatteryController.BatterySide, new_state: _BatteryController.BatteryState) -> void:
@@ -525,13 +578,11 @@ func _spawn_local_sim_bot_if_needed() -> void:
 func _init_bot_controllers(p: Dictionary) -> void:
 	_apply_naval_controllers_to_ship(p)
 	_apply_bot_helm_overrides(p)
-	# Bots auto-fire: battery fires as soon as target is in arc and battery is loaded.
-	var port_b: Variant = p.get("battery_port")
-	var stbd_b: Variant = p.get("battery_stbd")
-	if port_b != null:
-		port_b.auto_fire_enabled = true
-	if stbd_b != null:
-		stbd_b.auto_fire_enabled = true
+	# Bots auto-fire: all batteries fire as soon as target is in arc and loaded.
+	for bat_key in BATTERY_CYCLE_KEYS:
+		var bat: Variant = p.get(bat_key)
+		if bat != null:
+			bat.auto_fire_enabled = true
 
 
 func _apply_bot_helm_overrides(p: Dictionary) -> void:
@@ -778,7 +829,7 @@ func _tick_bot(p: Dictionary, player_idx: int, delta: float) -> void:
 
 	_tick_ship_physics(p, helm, sail, delta, false)
 
-	# --- Battery processing with bot fire intents ---
+	# --- Battery processing with bot fire intents (all 4 batteries) ---
 	var hull_n: Vector2 = Vector2(p.dir.x, p.dir.y)
 	if hull_n.length_squared() < 0.0001:
 		hull_n = Vector2.RIGHT
@@ -788,31 +839,35 @@ func _tick_bot(p: Dictionary, player_idx: int, delta: float) -> void:
 	p["aim_dir"] = aim_n
 
 	var ship_pos := Vector2(float(p.wx), float(p.wy))
-	var port_bat: Variant = p.get("battery_port")
-	var stbd_bat: Variant = p.get("battery_stbd")
+	var bot_all_bats: Array = [p.get("battery_port"), p.get("battery_bow"), p.get("battery_stbd"), p.get("battery_stern")]
 	var max_bat_range: float = NC.MAX_CANNON_RANGE
-	if port_bat != null:
-		max_bat_range = maxf(max_bat_range, port_bat.max_range)
-	if stbd_bat != null:
-		max_bat_range = maxf(max_bat_range, stbd_bat.max_range)
+	for bat in bot_all_bats:
+		if bat != null:
+			max_bat_range = maxf(max_bat_range, bat.max_range)
 	var target_dist_m: float = _battery_target_distance_m(p, aim_n, max_bat_range)
 	p["_naval_acc_dist"] = target_dist_m
 	p["_naval_spd"] = float(p.get("move_speed", 0.0))
 
-	# Fire intent: bot controller decides which side.
+	# Fire intent: bot controller decides which side; chase guns auto-fire.
 	var fire_port: bool = bot_ctrl.fire_port_intent
 	var fire_stbd: bool = bot_ctrl.fire_stbd_intent
 	var fired_any: bool = false
 
-	if port_bat != null:
-		var eff_port_aim_b: Vector2 = _effective_broadside_aim_for_side(p, hull_n, true)
-		for cannon_slot in port_bat.process_frame(delta, hull_n, eff_port_aim_b, ship_pos, fire_port, target_dist_m):
-			_fire_projectile(p, int(cannon_slot), port_bat.damage_per_shot_for_current_mode(), eff_port_aim_b, port_bat)
-			fired_any = true
-	if stbd_bat != null:
-		var eff_stbd_aim_b: Vector2 = _effective_broadside_aim_for_side(p, hull_n, false)
-		for cannon_slot in stbd_bat.process_frame(delta, hull_n, eff_stbd_aim_b, ship_pos, fire_stbd, target_dist_m):
-			_fire_projectile(p, int(cannon_slot), stbd_bat.damage_per_shot_for_current_mode(), eff_stbd_aim_b, stbd_bat)
+	for bat in bot_all_bats:
+		if bat == null:
+			continue
+		var bat_aim: Vector2 = _effective_aim_for_battery(p, hull_n, bat)
+		var should_fire: bool = false
+		match bat.side:
+			_BatteryController.BatterySide.PORT:
+				should_fire = fire_port
+			_BatteryController.BatterySide.STARBOARD:
+				should_fire = fire_stbd
+			_BatteryController.BatterySide.FORWARD, _BatteryController.BatterySide.AFT:
+				# Chase guns auto-fire when target is in arc (auto_fire_enabled handles this).
+				should_fire = bat.auto_fire_enabled
+		for cannon_slot in bat.process_frame(delta, hull_n, bat_aim, ship_pos, should_fire, target_dist_m):
+			_fire_projectile(p, int(cannon_slot), bat.damage_per_shot_for_current_mode(), bat_aim, bat)
 			fired_any = true
 
 	if fired_any:
@@ -1136,47 +1191,40 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 
 	var port_bat = p.get("battery_port")
 	var stbd_bat = p.get("battery_stbd")
-	if port_bat != null and stbd_bat != null:
-		if Input.is_action_just_pressed(FIRE_MODE_ACTION):
-			if port_bat.fire_mode == _BatteryController.FireMode.SALVO:
-				port_bat.fire_mode = _BatteryController.FireMode.RIPPLE
-				stbd_bat.fire_mode = _BatteryController.FireMode.RIPPLE
-			else:
-				port_bat.fire_mode = _BatteryController.FireMode.SALVO
-				stbd_bat.fire_mode = _BatteryController.FireMode.SALVO
-			_play_tone(312.0, 0.04, 0.12)
+	var bow_bat = p.get("battery_bow")
+	var stern_bat = p.get("battery_stern")
+	var all_batteries: Array = [port_bat, bow_bat, stbd_bat, stern_bat]
+	var active_bat_idx: int = int(p.get("active_battery_index", 0))
+	var active_bat: Variant = _get_battery_by_cycle_index(p, active_bat_idx)
+	# Fire mode toggle applies to ALL batteries simultaneously.
+	if Input.is_action_just_pressed(FIRE_MODE_ACTION):
+		var new_mode: int = _BatteryController.FireMode.SALVO
+		if active_bat != null and active_bat.fire_mode == _BatteryController.FireMode.SALVO:
+			new_mode = _BatteryController.FireMode.RIPPLE
+		for bat in all_batteries:
+			if bat != null:
+				bat.fire_mode = new_mode
+		_play_tone(312.0, 0.04, 0.12)
+	# Elevation adjusts only the ACTIVE battery (R/T keys).
 	var elev_up: bool = Input.is_action_pressed(ELEV_UP_ACTION)
 	var elev_down: bool = Input.is_action_pressed(ELEV_DOWN_ACTION)
-	var _aim_port_on: bool = bool(p.get("aim_port_active", true))
-	var _aim_stbd_on: bool = bool(p.get("aim_stbd_active", false))
-	# Elevation adjusts ALL active batteries simultaneously.
 	if elev_up or elev_down:
 		var elev_dir: float = 1.0 if elev_up else -1.0
-		if _aim_port_on and port_bat != null:
-			port_bat.adjust_elevation(delta, elev_dir)
-		if _aim_stbd_on and stbd_bat != null:
-			stbd_bat.adjust_elevation(delta, elev_dir)
+		if active_bat != null:
+			active_bat.adjust_elevation(delta, elev_dir)
 	else:
-		if port_bat != null:
-			port_bat.reset_elevation_hold()
-		if stbd_bat != null:
-			stbd_bat.reset_elevation_hold()
-	# Zoom locks to the farthest active battery's ballistic range — always in sync.
-	# Picks whichever active battery has the longer range (lower zoom = wider view).
-	var best_zoom: float = _ZOOM_MAX
-	var has_active_bat: bool = false
-	if _aim_port_on and port_bat != null:
-		best_zoom = minf(best_zoom, _zoom_for_battery_range(port_bat))
-		has_active_bat = true
-	if _aim_stbd_on and stbd_bat != null:
-		best_zoom = minf(best_zoom, _zoom_for_battery_range(stbd_bat))
-		has_active_bat = true
-	if has_active_bat:
-		_zoom_target = best_zoom
-		_zoom = best_zoom
-	else:
-		_zoom_target = NC.NAVAL_DEFAULT_ZOOM
-		_zoom = NC.NAVAL_DEFAULT_ZOOM
+		for bat in all_batteries:
+			if bat != null:
+				bat.reset_elevation_hold()
+	# Zoom locks to the active battery's ballistic range.
+	# Skipped when zoom-independent mode is active (fleet arena uses scroll wheel).
+	if not _camera_zoom_independent:
+		if active_bat != null:
+			_zoom_target = _zoom_for_battery_range(active_bat)
+			_zoom = _zoom_target
+		else:
+			_zoom_target = NC.NAVAL_DEFAULT_ZOOM
+			_zoom = NC.NAVAL_DEFAULT_ZOOM
 
 	var sail = p.get("sail")
 	if sail == null:
@@ -1259,30 +1307,27 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 		aim_n = aim_n.normalized()
 
 	var ship_pos := Vector2(float(p.wx), float(p.wy))
-	var port_b = port_bat
-	var stbd_b = stbd_bat
+	# Compute target distance using active battery's aim direction.
 	var max_bat_range: float = NC.MAX_CANNON_RANGE
-	if port_b != null:
-		max_bat_range = maxf(max_bat_range, port_b.max_range)
-	if stbd_b != null:
-		max_bat_range = maxf(max_bat_range, stbd_b.max_range)
+	for bat in all_batteries:
+		if bat != null:
+			max_bat_range = maxf(max_bat_range, bat.max_range)
 	var target_dist_m: float = _battery_target_distance_m(p, aim_n, max_bat_range)
 	p["_naval_acc_dist"] = target_dist_m
 	p["_naval_spd"] = float(p.get("move_speed", 0.0))
-	var fire_port_active: bool = bool(p.get("aim_port_active", true))
-	var fire_stbd_active: bool = bool(p.get("aim_stbd_active", false))
+	# Process ALL 4 batteries each frame (reload timers tick on all).
+	# Only the ACTIVE battery aims and fires; inactive batteries get zero aim
+	# so they stay in IDLE/RELOADING (reload timers still tick).
 	var fired_any: bool = false
-	if port_b != null:
-		var eff_port_aim: Vector2 = _effective_broadside_aim_for_side(p, hull_n, true)
-		var port_fire: bool = fire_just_pressed and fire_port_active
-		for cannon_slot in port_b.process_frame(delta, hull_n, eff_port_aim, ship_pos, port_fire, target_dist_m):
-			_fire_projectile(p, int(cannon_slot), port_b.damage_per_shot_for_current_mode(), eff_port_aim, port_b)
-			fired_any = true
-	if stbd_b != null:
-		var eff_stbd_aim: Vector2 = _effective_broadside_aim_for_side(p, hull_n, false)
-		var stbd_fire: bool = fire_just_pressed and fire_stbd_active
-		for cannon_slot in stbd_b.process_frame(delta, hull_n, eff_stbd_aim, ship_pos, stbd_fire, target_dist_m):
-			_fire_projectile(p, int(cannon_slot), stbd_b.damage_per_shot_for_current_mode(), eff_stbd_aim, stbd_b)
+	for bat_i in range(BATTERY_CYCLE_COUNT):
+		var bat: Variant = all_batteries[bat_i]
+		if bat == null:
+			continue
+		var is_active: bool = (bat_i == active_bat_idx)
+		var bat_aim: Vector2 = _effective_aim_for_battery(p, hull_n, bat) if is_active else Vector2.ZERO
+		var should_fire: bool = fire_just_pressed and is_active
+		for cannon_slot in bat.process_frame(delta, hull_n, bat_aim, ship_pos, should_fire, target_dist_m):
+			_fire_projectile(p, int(cannon_slot), bat.damage_per_shot_for_current_mode(), bat_aim, bat)
 			fired_any = true
 
 	if fired_any:
@@ -1290,13 +1335,6 @@ func _tick_player(p: Dictionary, delta: float) -> void:
 		p.atk_time = ATK_DUR
 		p.hit_landed = false
 	p.atk_time = maxf(p.atk_time - delta, 0.0)
-
-	# Auto-aim elevation: DISABLED for now.
-	# if not elev_up and not elev_down:
-	# 	if bool(p.get("aim_port_active", true)) and port_b != null:
-	# 		_auto_aim_elevation(p, port_b, hull_n, delta)
-	# 	if bool(p.get("aim_stbd_active", false)) and stbd_b != null:
-	# 		_auto_aim_elevation(p, stbd_b, hull_n, delta)
 
 
 func _aim_dir_broadside_to_target(hull: Vector2, to_target_n: Vector2, use_port: bool, half_arc_deg: float) -> Vector2:
@@ -1427,24 +1465,41 @@ func _auto_aim_elevation(p: Dictionary, bat: _BatteryController, hull_n: Vector2
 
 
 func _update_broadside_aim(p: Dictionary, _pad_id: int) -> void:
+	## Q/E cycle through batteries: E = next (clockwise), Q = prev (counter-clockwise).
+	## Note: BROADSIDE_PORT_ACTION is bound to E, BROADSIDE_STBD_ACTION to Q.
+	var idx: int = int(p.get("active_battery_index", 0))
 	if Input.is_action_just_pressed(BROADSIDE_PORT_ACTION):
-		p["aim_port_active"] = not bool(p.get("aim_port_active", true))
+		# E key = clockwise (next)
+		idx = (idx + 1) % BATTERY_CYCLE_COUNT
+		p["active_battery_index"] = idx
+		_play_tone(300.0, 0.04, 0.10)
 	if Input.is_action_just_pressed(BROADSIDE_STBD_ACTION):
-		p["aim_stbd_active"] = not bool(p.get("aim_stbd_active", false))
+		# Q key = counter-clockwise (prev)
+		idx = (idx - 1 + BATTERY_CYCLE_COUNT) % BATTERY_CYCLE_COUNT
+		p["active_battery_index"] = idx
+		_play_tone(260.0, 0.04, 0.10)
+	# Update aim_dir and legacy aim flags based on active battery.
 	var hull := Vector2(p.dir.x, p.dir.y)
 	if hull.length_squared() < 0.0001:
 		hull = Vector2.RIGHT
 	hull = hull.normalized()
-	var port_on: bool = bool(p.get("aim_port_active", true))
-	var stbd_on: bool = bool(p.get("aim_stbd_active", false))
-	if port_on and stbd_on:
-		p["aim_dir"] = hull.rotated(PI * 0.5)
-	elif port_on:
-		p["aim_dir"] = hull.rotated(PI * 0.5)
-	elif stbd_on:
-		p["aim_dir"] = hull.rotated(-PI * 0.5)
-	else:
-		p["aim_dir"] = hull
+	match idx:
+		0: # Port
+			p["aim_port_active"] = true
+			p["aim_stbd_active"] = false
+			p["aim_dir"] = hull.rotated(PI * 0.5)
+		1: # Bow
+			p["aim_port_active"] = false
+			p["aim_stbd_active"] = false
+			p["aim_dir"] = hull
+		2: # Starboard
+			p["aim_port_active"] = false
+			p["aim_stbd_active"] = true
+			p["aim_dir"] = hull.rotated(-PI * 0.5)
+		3: # Stern
+			p["aim_port_active"] = false
+			p["aim_stbd_active"] = false
+			p["aim_dir"] = -hull
 
 
 func _is_pad_fire_pressed(pad_id: int) -> bool:
@@ -1496,6 +1551,27 @@ func _effective_broadside_aim_for_side(p: Dictionary, hull_n: Vector2, is_port: 
 			if av.dot(perp) > 0.12:
 				return av
 	return perp
+
+
+## Returns the effective aim direction for any battery (including bow/stern).
+func _effective_aim_for_battery(p: Dictionary, hull_n: Vector2, battery: _BatteryController) -> Vector2:
+	match battery.side:
+		_BatteryController.BatterySide.PORT:
+			return _effective_broadside_aim_for_side(p, hull_n, true)
+		_BatteryController.BatterySide.STARBOARD:
+			return _effective_broadside_aim_for_side(p, hull_n, false)
+		_BatteryController.BatterySide.FORWARD:
+			return hull_n
+		_BatteryController.BatterySide.AFT:
+			return -hull_n
+	return hull_n
+
+
+## Returns the battery at the given cycle index (0=Port, 1=Bow, 2=Stbd, 3=Stern).
+func _get_battery_by_cycle_index(p: Dictionary, idx: int) -> Variant:
+	if idx < 0 or idx >= BATTERY_CYCLE_COUNT:
+		return null
+	return p.get(BATTERY_CYCLE_KEYS[idx])
 
 
 func _cannon_muzzle_world(p: Dictionary, battery: _BatteryController, cannon_index: int) -> Vector2:
@@ -1959,33 +2035,15 @@ func _rpc_respawn_ship(idx: int) -> void:
 	_respawn_ship(idx)
 
 
-## Naval arena win condition: first to KILL_TARGET kills, or most kills at MATCH_TIME_LIMIT.
+## Naval arena win condition — delegates to the pluggable _win_condition instance.
 func _check_win() -> void:
 	if _winner != -2:
 		return
-	# --- Kill target check ---
-	for i in range(_players.size()):
-		var pid: int = int(_players[i].get("peer_id", i))
-		var kills: int = int(_scoreboard.get(pid, {}).get("kills", 0))
-		if kills >= KILL_TARGET:
-			_declare_winner(i)
-			return
-	# --- Time limit check ---
-	if _match_timer >= MATCH_TIME_LIMIT:
-		var top_kills: int = -1
-		var top_indices: Array[int] = []
-		for i in range(_players.size()):
-			var pid: int = int(_players[i].get("peer_id", i))
-			var kills: int = int(_scoreboard.get(pid, {}).get("kills", 0))
-			if kills > top_kills:
-				top_kills = kills
-				top_indices = [i]
-			elif kills == top_kills:
-				top_indices.append(i)
-		if top_indices.size() == 1:
-			_declare_winner(top_indices[0])
-		else:
-			_declare_winner(-1)  # draw
+	if _win_condition == null:
+		return
+	var result: int = _win_condition.check(_players, _scoreboard, _match_timer)
+	if result != WinCondition.PLAYING:
+		_declare_winner(result)
 
 
 func _declare_winner(idx: int) -> void:
@@ -2559,17 +2617,22 @@ func _draw_ship_crew_panel(vp: Vector2) -> void:
 					var p2: Vector2 = Vector2(schem_x + 4.0 + neighbor.position_on_hull.x * (schematic_w - 8.0), room_area_y + neighbor.position_on_hull.y * room_area_h)
 					draw_line(p1, p2, Color(0.35, 0.40, 0.50, 0.2), 0.8)
 
-	# Battery icons beside schematic.
-	var sel_fire_port: bool = bool(p.get("aim_port_active", true))
-	var sel_fire_stbd: bool = bool(p.get("aim_stbd_active", false))
+	# Battery icons beside schematic — all 4 batteries shown.
+	var active_bat_hud_idx: int = int(p.get("active_battery_index", 0))
 	var bat_icon_r: float = 7.0
+	var bat_entries: Array[Dictionary] = []
 	var port_b: Variant = p.get("battery_port")
 	var stbd_b: Variant = p.get("battery_stbd")
-	var bat_entries: Array[Dictionary] = []
+	var bow_b: Variant = p.get("battery_bow")
+	var stern_b: Variant = p.get("battery_stern")
 	if port_b != null:
-		bat_entries.append({"bat": port_b, "pos": Vector2(schem_x + 4.0, schem_cy), "label": "P"})
+		bat_entries.append({"bat": port_b, "pos": Vector2(schem_x + 4.0, schem_cy), "label": "P", "cycle_idx": 0})
+	if bow_b != null:
+		bat_entries.append({"bat": bow_b, "pos": Vector2(schem_x + schematic_w * 0.5, schem_cy - 14.0), "label": "B", "cycle_idx": 1})
 	if stbd_b != null:
-		bat_entries.append({"bat": stbd_b, "pos": Vector2(schem_x + schematic_w - 4.0, schem_cy), "label": "S"})
+		bat_entries.append({"bat": stbd_b, "pos": Vector2(schem_x + schematic_w - 4.0, schem_cy), "label": "S", "cycle_idx": 2})
+	if stern_b != null:
+		bat_entries.append({"bat": stern_b, "pos": Vector2(schem_x + schematic_w * 0.5, schem_cy + 14.0), "label": "A", "cycle_idx": 3})
 	for be in bat_entries:
 		var bat: _BatteryController = be.bat
 		var bp: Vector2 = be.pos
@@ -2596,8 +2659,7 @@ func _draw_ship_crew_panel(vp: Vector2) -> void:
 		draw_circle(bp, bat_icon_r, Color(0.06, 0.08, 0.12, 0.9))
 		draw_circle(bp, bat_icon_r - 1.5, bc)
 		draw_arc(bp, bat_icon_r, 0.0, TAU, 20, Color(0.6, 0.65, 0.75, 0.7), 1.2, true)
-		var bat_selected: bool = (bat.side == _BatteryController.BatterySide.PORT and sel_fire_port) \
-			or (bat.side == _BatteryController.BatterySide.STARBOARD and sel_fire_stbd)
+		var bat_selected: bool = (int(be.get("cycle_idx", -1)) == active_bat_hud_idx)
 		if bat_selected:
 			draw_arc(bp, bat_icon_r + 3.0, 0.0, TAU, 24, Color(1.0, 0.88, 0.30, 0.92), 2.0, true)
 		if reloading:
@@ -2755,14 +2817,13 @@ func _draw_ship_crew_panel(vp: Vector2) -> void:
 	draw_string(font, Vector2(hp_bar_x, hint_y), "Crew:", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, bright_col)
 	draw_string(font, Vector2(hp_bar_x + 40.0, hint_y), "1-9 select room \u00b7 press again to add \u00b7 +/- adjust", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, hint_col)
 	draw_string(font, Vector2(hp_bar_x, hint_y + 14.0), "Combat:", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, bright_col)
-	draw_string(font, Vector2(hp_bar_x + 52.0, hint_y + 14.0), "E port \u00b7 Q starboard \u00b7 F fire \u00b7 R/T elevation \u00b7 V fire mode", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, hint_col)
+	draw_string(font, Vector2(hp_bar_x + 52.0, hint_y + 14.0), "Q/E cycle battery \u00b7 F fire \u00b7 R/T elevation \u00b7 B fire mode", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, hint_col)
 	draw_string(font, Vector2(hp_bar_x, hint_y + 28.0), "Ship:", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, bright_col)
 	draw_string(font, Vector2(hp_bar_x + 38.0, hint_y + 28.0), "W/S sails \u00b7 A/D steer \u00b7 L wheel lock \u00b7 Tab close this panel", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, hint_col)
 
 
 func _ballistic_splash_range_for_player(p: Dictionary) -> float:
-	var port_on: bool = bool(p.get("aim_port_active", true))
-	var bat: Variant = p.get("battery_port") if port_on else p.get("battery_stbd")
+	var bat: Variant = _get_battery_by_cycle_index(p, int(p.get("active_battery_index", 0)))
 	var elev_deg: float = 0.0
 	if bat != null:
 		elev_deg = bat.elevation_degrees()
@@ -3097,16 +3158,11 @@ func _draw_trajectory_arc_preview(alpha_mult: float = 1.0) -> void:
 	else:
 		hull_n = hull_n.normalized()
 	var batteries: Array[Dictionary] = []
-	var port_b: Variant = p.get("battery_port")
-	var stbd_b: Variant = p.get("battery_stbd")
-	var port_active: bool = bool(p.get("aim_port_active", true))
-	var stbd_active: bool = bool(p.get("aim_stbd_active", false))
-	if port_b != null and port_active:
-		var aim_p: Vector2 = _effective_broadside_aim_for_side(p, hull_n, true)
-		batteries.append({"bat": port_b, "aim": aim_p, "col": Color(1.0, 0.28, 0.22, 0.82 * alpha_mult)})
-	if stbd_b != null and stbd_active:
-		var aim_s: Vector2 = _effective_broadside_aim_for_side(p, hull_n, false)
-		batteries.append({"bat": stbd_b, "aim": aim_s, "col": Color(1.0, 0.45, 0.18, 0.82 * alpha_mult)})
+	var arc_active_idx: int = int(p.get("active_battery_index", 0))
+	var arc_bat: Variant = _get_battery_by_cycle_index(p, arc_active_idx)
+	if arc_bat != null:
+		var aim_v: Vector2 = _effective_aim_for_battery(p, hull_n, arc_bat)
+		batteries.append({"bat": arc_bat, "aim": aim_v, "col": Color(1.0, 0.35, 0.20, 0.82 * alpha_mult)})
 	for bd in batteries:
 		_draw_single_battery_arc(p, bd.aim, bd.bat, bd.col, alpha_mult)
 
@@ -3258,19 +3314,16 @@ func _draw_aim_cursor() -> void:
 	if hull_n.length_squared() < 0.0001:
 		hull_n = Vector2.RIGHT
 	hull_n = hull_n.normalized()
-	# Draw a reticle for each active battery independently.
-	if bool(p.get("aim_port_active", true)):
-		var bat: Variant = p.get("battery_port")
-		if bat != null:
-			_draw_battery_reticle(p, hull_n, bat as _BatteryController, true)
-	if bool(p.get("aim_stbd_active", false)):
-		var bat: Variant = p.get("battery_stbd")
-		if bat != null:
-			_draw_battery_reticle(p, hull_n, bat as _BatteryController, false)
+	# Draw a reticle for the active battery only.
+	var active_idx: int = int(p.get("active_battery_index", 0))
+	var active_bat_hud: Variant = _get_battery_by_cycle_index(p, active_idx)
+	if active_bat_hud != null:
+		var is_port_hud: bool = (active_idx == 0)
+		_draw_battery_reticle(p, hull_n, active_bat_hud as _BatteryController, is_port_hud)
 
 
-func _draw_battery_reticle(p: Dictionary, hull_n: Vector2, bat_br: _BatteryController, is_port: bool) -> void:
-	var aim_dir: Vector2 = _effective_broadside_aim_for_side(p, hull_n, is_port)
+func _draw_battery_reticle(p: Dictionary, hull_n: Vector2, bat_br: _BatteryController, _is_port: bool) -> void:
+	var aim_dir: Vector2 = _effective_aim_for_battery(p, hull_n, bat_br)
 	var elev_deg: float = bat_br.elevation_degrees()
 	var vel: Dictionary = _CannonBallistics.initial_velocity(aim_dir, elev_deg)
 	var vx: float = float(vel.vx)
@@ -3403,17 +3456,9 @@ func _draw_motion_battery_hud(_vp: Vector2) -> void:
 	var sub: Color = Color(0.78, 0.86, 0.98, 0.9)
 	var dim: Color = Color(0.55, 0.62, 0.72, 0.88)
 
-	var bs_port_on: bool = bool(p.get("aim_port_active", true))
-	var bs_stbd_on: bool = bool(p.get("aim_stbd_active", false))
-	var bs_txt: String
-	if bs_port_on and bs_stbd_on:
-		bs_txt = "Both broadsides"
-	elif bs_port_on:
-		bs_txt = "Port broadside"
-	elif bs_stbd_on:
-		bs_txt = "Starboard broadside"
-	else:
-		bs_txt = "No battery selected"
+	var dbg_bat_labels: Array[String] = ["Port", "Bow", "Starboard", "Stern"]
+	var dbg_bat_idx: int = int(p.get("active_battery_index", 0))
+	var bs_txt: String = dbg_bat_labels[dbg_bat_idx] if dbg_bat_idx >= 0 and dbg_bat_idx < 4 else "None"
 	draw_string(font, Vector2(x, y), "Aim: %s" % bs_txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, txt)
 	var spr_info: Dictionary = compute_ship_sprite_for_world_heading(float(p.dir.x), float(p.dir.y))
 	var spr_label: String = str(spr_info.get("sprite_compass", "?"))
@@ -3450,21 +3495,15 @@ func _draw_motion_battery_hud(_vp: Vector2) -> void:
 	draw_string(font, Vector2(x, y + 88.0), "Speed %.2f / %.1f" % [spd, cap], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, dim)
 
 	var bat_y: float = y + 108.0
-	var sel_port_on: bool = bool(p.get("aim_port_active", true))
-	var sel_stbd_on: bool = bool(p.get("aim_stbd_active", false))
-	var fire_sel: String
-	if sel_port_on and sel_stbd_on:
-		fire_sel = "Both (E/Q)"
-	elif sel_port_on:
-		fire_sel = "Port (E)"
-	elif sel_stbd_on:
-		fire_sel = "Starboard (Q)"
-	else:
-		fire_sel = "None"
-	draw_string(font, Vector2(x, bat_y), "Fire battery: %s · F/RT" % fire_sel, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, sub)
+	var active_bi: int = int(p.get("active_battery_index", 0))
+	var bat_labels: Array[String] = ["Port", "Bow", "Starboard", "Stern"]
+	var fire_sel: String = bat_labels[active_bi] if active_bi >= 0 and active_bi < 4 else "None"
+	draw_string(font, Vector2(x, bat_y), "Active: %s (Q/E) · Fire F · Elev R/T" % fire_sel, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, sub)
 	draw_string(font, Vector2(x, bat_y + 14.0), "Batteries", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, sub)
-	_draw_battery_row(font, x, bat_y + 30.0, panel_w, p.get("battery_port"), txt, sub, dim, sel_port_on)
-	_draw_battery_row(font, x, bat_y + 58.0, panel_w, p.get("battery_stbd"), txt, sub, dim, sel_stbd_on)
+	for bi in range(BATTERY_CYCLE_COUNT):
+		var bat_row_y: float = bat_y + 30.0 + float(bi) * 28.0
+		var bat_v: Variant = _get_battery_by_cycle_index(p, bi)
+		_draw_battery_row(font, x, bat_row_y, panel_w, bat_v, txt, sub, dim, bi == active_bi)
 
 
 func _draw_battery_row(font: Font, x: float, y: float, panel_w: float, bat: Variant, txt: Color, _sub: Color, dim: Color, selected: bool = false) -> void:
@@ -3492,8 +3531,7 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 	var hud_idx: int = clampi(_camera_follow_index, 0, _players.size() - 1)
 	var p: Dictionary = _players[hud_idx]
 	var font: Font = ThemeDB.fallback_font
-	var sel_fire_port: bool = bool(p.get("aim_port_active", true))
-	var sel_fire_stbd: bool = bool(p.get("aim_stbd_active", false))
+	var ftl_active_bat_idx: int = int(p.get("active_battery_index", 0))
 	var hw: float = 64.0
 	var hh: float = 180.0
 	var cx: float = vp.x - hw - 20.0
@@ -3627,10 +3665,16 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 	var bat_entries: Array[Dictionary] = []
 	var port_b: Variant = p.get("battery_port")
 	var stbd_b: Variant = p.get("battery_stbd")
+	var bow_b: Variant = p.get("battery_bow")
+	var stern_b: Variant = p.get("battery_stern")
 	if port_b != null:
-		bat_entries.append({"bat": port_b, "pos": Vector2(cx - hw * 0.88, cy - hh * 0.05), "label": "P"})
+		bat_entries.append({"bat": port_b, "pos": Vector2(cx - hw * 0.88, cy - hh * 0.05), "label": "P", "cycle_idx": 0})
+	if bow_b != null:
+		bat_entries.append({"bat": bow_b, "pos": Vector2(cx, cy - hh * 0.35), "label": "B", "cycle_idx": 1})
 	if stbd_b != null:
-		bat_entries.append({"bat": stbd_b, "pos": Vector2(cx + hw * 0.88, cy - hh * 0.05), "label": "S"})
+		bat_entries.append({"bat": stbd_b, "pos": Vector2(cx + hw * 0.88, cy - hh * 0.05), "label": "S", "cycle_idx": 2})
+	if stern_b != null:
+		bat_entries.append({"bat": stern_b, "pos": Vector2(cx, cy + hh * 0.25), "label": "A", "cycle_idx": 3})
 	for be in bat_entries:
 		var bat: _BatteryController = be.bat
 		var bp: Vector2 = be.pos
@@ -3659,8 +3703,7 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 		draw_circle(bp, bat_icon_r, Color(0.06, 0.08, 0.12, 0.9))
 		draw_circle(bp, bat_icon_r - 1.5, bc)
 		draw_arc(bp, bat_icon_r, 0.0, TAU, 20, Color(0.6, 0.65, 0.75, 0.7), 1.2, true)
-		var bat_is_selected: bool = (bat.side == _BatteryController.BatterySide.PORT and sel_fire_port) \
-			or (bat.side == _BatteryController.BatterySide.STARBOARD and sel_fire_stbd)
+		var bat_is_selected: bool = (int(be.get("cycle_idx", -1)) == ftl_active_bat_idx)
 		if bat_is_selected:
 			draw_arc(bp, bat_icon_r + 3.5, 0.0, TAU, 24, Color(1.0, 0.88, 0.30, 0.92), 2.0, true)
 		if is_ready:
@@ -3735,7 +3778,7 @@ func _draw_ftl_ship_hud(vp: Vector2) -> void:
 
 	var elev_y: float = maxf(hp_bar_y + 36.0, status_y + 16.0)
 	var elev_alpha: float = _hud_fade_alpha(_fade_elev_hud)
-	var ref_bat: Variant = p.get("battery_port") if sel_fire_port else p.get("battery_stbd")
+	var ref_bat: Variant = _get_battery_by_cycle_index(p, ftl_active_bat_idx)
 	if ref_bat != null and elev_alpha > 0.01:
 		var elev_val: float = ref_bat.cannon_elevation
 		var elev_deg: float = ref_bat.elevation_degrees()
@@ -3965,13 +4008,10 @@ func _draw_ability_bar(vp: Vector2) -> void:
 	draw_rect(Rect2(x, y, bar_w, bar_h), Color(0.10, 0.12, 0.16, 0.82))
 	draw_rect(Rect2(x, y, bar_w, bar_h), Color(0.34, 0.42, 0.52, 0.9), false, 2.0)
 	var p: Dictionary = _players[_my_index] if not _players.is_empty() else {}
-	var port_b: Variant = p.get("battery_port")
-	var stbd_b2: Variant = p.get("battery_stbd")
-	var sel_port_ab: bool = bool(p.get("aim_port_active", true)) if not p.is_empty() else true
-	var sel_stbd_ab: bool = bool(p.get("aim_stbd_active", false)) if not p.is_empty() else false
-	var active_bat: Variant = port_b if sel_port_ab else stbd_b2
+	var ab_bat_idx: int = int(p.get("active_battery_index", 0)) if not p.is_empty() else 0
+	var active_bat: Variant = _get_battery_by_cycle_index(p, ab_bat_idx) if not p.is_empty() else null
 	var mode_lbl: String = "Ripple"
-	if port_b != null and port_b.fire_mode == _BatteryController.FireMode.SALVO:
+	if active_bat != null and active_bat.fire_mode == _BatteryController.FireMode.SALVO:
 		mode_lbl = "Barrage"
 	_draw_ability_slot(font, Vector2(x + 8.0, y + 12.0), _slot_key_caption(FIRE_MODE_ACTION), mode_lbl, true)
 	var elev_lbl: String = "+0.0°"
@@ -3981,28 +4021,12 @@ func _draw_ability_bar(vp: Vector2) -> void:
 	var helm: Variant = p.get("helm")
 	var wheel_locked: bool = helm != null and bool(helm.wheel_locked)
 	_draw_ability_slot(font, Vector2(x + 268.0, y + 12.0), _slot_key_caption(WHEEL_LOCK_ACTION), "Wheel lock", wheel_locked)
-	var ready_count: int = 0
-	var total_count: int = 0
-	if sel_port_ab and port_b != null:
-		total_count += 1
-		if port_b.state == _BatteryController.BatteryState.READY:
-			ready_count += 1
-	if sel_stbd_ab and stbd_b2 != null:
-		total_count += 1
-		if stbd_b2.state == _BatteryController.BatteryState.READY:
-			ready_count += 1
-	var side_lbl: String
-	if sel_port_ab and sel_stbd_ab:
-		side_lbl = "P+S"
-	elif sel_port_ab:
-		side_lbl = "P"
-	elif sel_stbd_ab:
-		side_lbl = "S"
-	else:
-		side_lbl = "—"
+	var ab_side_labels: Array[String] = ["P", "B", "S", "A"]
+	var side_lbl: String = ab_side_labels[ab_bat_idx] if ab_bat_idx >= 0 and ab_bat_idx < 4 else "—"
+	var is_ready: bool = active_bat != null and active_bat.state == _BatteryController.BatteryState.READY
 	var fire_key: String = _slot_key_caption(_ACTIONS.atk)
-	var fire_lbl: String = "FIRE %s %d/%d" % [side_lbl, ready_count, total_count]
-	_draw_ability_slot(font, Vector2(x + 398.0, y + 12.0), fire_key, fire_lbl, ready_count > 0)
+	var fire_lbl: String = "FIRE %s" % side_lbl
+	_draw_ability_slot(font, Vector2(x + 398.0, y + 12.0), fire_key, fire_lbl, is_ready)
 	var cam_hint: String = ""
 	if not _camera_locked:
 		cam_hint = " · FREE CAM (press 1 to snap back)"
