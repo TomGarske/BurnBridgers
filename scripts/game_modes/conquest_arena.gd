@@ -97,9 +97,9 @@ const PHASE_NAMES: Dictionary = {
 # ---------------------------------------------------------------------------
 var _cam_dist: float = CAM_DIST_DEFAULT
 var _cam_dist_target: float = CAM_DIST_DEFAULT
-## Camera starts looking at Africa (lon~20E, lat~10N in goldberg coords: Z=up).
-var _cam_dir: Vector3 = Vector3(0.94, 0.34, 0.17).normalized()
-var _cam_up: Vector3 = Vector3(0, 0, 1)  # Z=up in goldberg convention
+## Camera starts looking at Africa. Godot convention: -X = prime meridian, +Y = north.
+var _cam_dir: Vector3 = Vector3(-0.95, 0.15, -0.27).normalized()
+var _cam_up: Vector3 = Vector3.UP  # Y=up in Godot convention
 var _default_quat: Quaternion
 ## Timer for auto-advancing setup phases (roll display, AI draft turns).
 var _setup_timer: float = 0.0
@@ -162,6 +162,7 @@ var _end_phase_button: Button = null
 var _end_turn_button: Button = null
 var _combat_log_label: Label = null
 var _quit_button: Button = null
+var _continue_button: Button = null
 
 
 # ---------------------------------------------------------------------------
@@ -282,9 +283,8 @@ func _update_camera(delta: float) -> void:
 		if _cam_dir.dot(world_target) > 0.999:
 			_cam_tracking = false
 
-	# Keep up vector pointing toward north pole (Z=up in goldberg convention).
-	var north: Vector3 = Vector3(0, 0, 1)
-	var perp: Vector3 = north - _cam_dir * _cam_dir.dot(north)
+	# Keep up vector pointing toward north pole (Y=up in Godot convention).
+	var perp: Vector3 = Vector3.UP - _cam_dir * _cam_dir.dot(Vector3.UP)
 	var target_up: Vector3 = perp.normalized() if perp.length_squared() > 1e-4 else Vector3.FORWARD
 	_cam_up = _cam_up.slerp(target_up, 1.0 - exp(-CAM_TRACK_SPEED * delta))
 
@@ -396,8 +396,8 @@ func _load_hex_data() -> void:
 # Territory → hex assignment (Voronoi on sphere, land only)
 # ---------------------------------------------------------------------------
 ## Angular distance threshold: hexes farther than this from any territory
-## center are left unassigned (ocean). cos(22°) ≈ 0.927.
-const HEX_ASSIGN_THRESHOLD: float = 0.927
+## center are left unassigned (ocean). cos(14°) ≈ 0.970.
+const HEX_ASSIGN_THRESHOLD: float = 0.970
 
 func _assign_hexes_to_territories() -> void:
 	if _cqs == null or _hex_data.is_empty():
@@ -414,7 +414,8 @@ func _assign_hexes_to_territories() -> void:
 	# For each hex, find the nearest territory center on the unit sphere.
 	# Only assign if the hex is within HEX_ASSIGN_THRESHOLD (i.e., on land).
 	for i in range(_hex_data.size()):
-		var hex_center: Vector3 = _hex_data[i]["c"] as Vector3
+		# Transform hex center from goldberg to Godot convention for comparison with sphere_pos.
+		var hex_center: Vector3 = _g2d(_hex_data[i]["c"] as Vector3)
 		var best_tid: String = ""
 		var best_dot: float = -2.0  # dot product: higher = closer on sphere
 		for t in _cqs.territories.values():
@@ -463,11 +464,12 @@ func _setup_territory_overlay() -> void:
 	mat.cull_mode = BaseMaterial3D.CULL_BACK
 	# MUST keep depth test ON so back-side hexes don't bleed through the globe.
 	mat.no_depth_test = false
+	mat.render_priority = 1  # Render after globe to avoid sort-order depth issues.
 
 	_territory_overlay = MeshInstance3D.new()
 	_territory_overlay.name = "TerritoryOverlay"
 	_territory_overlay.material_override = mat
-	_territory_overlay.scale = Vector3(1.006, 1.006, 1.006)
+	# No scale — vertex offset baked into mesh data at radius 1.02.
 	_globe_root.add_child(_territory_overlay)
 
 
@@ -479,12 +481,19 @@ func _setup_selection_overlay() -> void:
 	mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	mat.no_depth_test = false
 	mat.cull_mode = BaseMaterial3D.CULL_BACK
+	mat.render_priority = 2  # Render after territory overlay.
 
 	_selection_overlay = MeshInstance3D.new()
 	_selection_overlay.name = "SelectionOverlay"
 	_selection_overlay.material_override = mat
-	_selection_overlay.scale = Vector3(1.008, 1.008, 1.008)
 	_globe_root.add_child(_selection_overlay)
+
+
+## Transform a goldberg-convention Vector3 to Godot SphereMesh convention.
+## Goldberg: X=prime meridian, Y=90E, Z=north pole.
+## Godot:    -X=prime meridian, -Z=90E, Y=north pole.
+func _g2d(v: Vector3) -> Vector3:
+	return Vector3(-v.x, v.z, -v.y)
 
 
 ## Rebuild the territory color mesh from current ownership state.
@@ -529,23 +538,23 @@ func _rebuild_territory_mesh() -> void:
 		var n: int = poly.size()
 		if n < 3:
 			continue
+		# Transform goldberg vertices to Godot convention and offset to radius 1.02.
 		var center: Vector3 = Vector3.ZERO
 		for v in poly:
-			center += v
-		center = (center / float(n)).normalized()
+			center += _g2d(v)
+		center = (center / float(n)).normalized() * 1.02
 
 		# Triangle fan.
 		for j in range(n):
 			verts.append(center)
-			verts.append(poly[j])
-			verts.append(poly[(j + 1) % n])
+			verts.append(_g2d(poly[j]) * 1.02)
+			verts.append(_g2d(poly[(j + 1) % n]) * 1.02)
 			colors.append(col)
 			colors.append(col)
 			colors.append(col)
 
 	if verts.is_empty():
 		_territory_overlay.mesh = null
-		DebugOverlay.log_message("[DEBUG] Territory mesh: 0 verts — mesh is NULL", true)
 		return
 
 	var arrays: Array = []
@@ -555,22 +564,6 @@ func _rebuild_territory_mesh() -> void:
 	var arr_mesh := ArrayMesh.new()
 	arr_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	_territory_overlay.mesh = arr_mesh
-	DebugOverlay.log_message("[DEBUG] Territory mesh built: %d verts, %d colors, overlay_parent=%s, overlay_visible=%s, scale=%s" % [
-		verts.size(), colors.size(),
-		str(_territory_overlay.get_parent().name) if _territory_overlay.get_parent() else "NONE",
-		str(_territory_overlay.visible),
-		str(_territory_overlay.scale)
-	])
-	# Log a sample vertex and color.
-	if verts.size() > 0:
-		DebugOverlay.log_message("[DEBUG]   sample vert[0]=%s color[0]=%s" % [str(verts[0]), str(colors[0])])
-	# Log material info.
-	var mat_check = _territory_overlay.material_override
-	if mat_check is StandardMaterial3D:
-		var sm: StandardMaterial3D = mat_check
-		DebugOverlay.log_message("[DEBUG]   mat: vertex_color=%s, transparency=%d, shading=%d, no_depth=%s, cull=%d" % [
-			str(sm.vertex_color_use_as_albedo), sm.transparency, sm.shading_mode,
-			str(sm.no_depth_test), sm.cull_mode])
 
 
 ## Rebuild the selection highlight mesh for the currently selected territory.
@@ -597,12 +590,12 @@ func _rebuild_selection_mesh() -> void:
 			continue
 		var center: Vector3 = Vector3.ZERO
 		for v in poly:
-			center += v
-		center = (center / float(n)).normalized()
+			center += _g2d(v)
+		center = (center / float(n)).normalized() * 1.025
 		for j in range(n):
 			verts.append(center)
-			verts.append(poly[j])
-			verts.append(poly[(j + 1) % n])
+			verts.append(_g2d(poly[j]) * 1.025)
+			verts.append(_g2d(poly[(j + 1) % n]) * 1.025)
 			colors.append(col)
 			colors.append(col)
 			colors.append(col)
@@ -676,8 +669,8 @@ func _rebuild_border_mesh() -> void:
 						shared.append(va)
 						break
 			if shared.size() >= 2:
-				verts.append(shared[0])
-				verts.append(shared[1])
+				verts.append(_g2d(shared[0]) * 1.015)
+				verts.append(_g2d(shared[1]) * 1.015)
 
 	if verts.is_empty():
 		_border_overlay.mesh = null
@@ -799,7 +792,7 @@ func _classify_hex_terrain() -> void:
 		if not tid.is_empty():
 			var t: ConquestData.ConquestTerritory = _cqs.territories.get(tid)
 			if t != null:
-				var hex_c: Vector3 = _hex_data[i]["c"] as Vector3
+				var hex_c: Vector3 = _g2d(_hex_data[i]["c"] as Vector3)
 				var dot_val: float = hex_c.dot(t.sphere_pos)
 				if dot_val > 0.97:
 					_hex_terrain_types[i] = ConquestData.TerrainType.LAND
@@ -809,7 +802,7 @@ func _classify_hex_terrain() -> void:
 				_hex_terrain_types[i] = ConquestData.TerrainType.OCEAN
 		else:
 			# Unassigned hex — check if near any territory.
-			var hex_c: Vector3 = _hex_data[i]["c"] as Vector3
+			var hex_c: Vector3 = _g2d(_hex_data[i]["c"] as Vector3)
 			var best_dot: float = -2.0
 			for t in _cqs.territories.values():
 				var d: float = hex_c.dot(t.sphere_pos)
@@ -855,11 +848,11 @@ func _pick_territory_from_mouse(mouse_pos: Vector2) -> String:
 
 	var hit_point: Vector3 = (local_from + local_dir * t_hit).normalized()
 
-	# Find nearest hex to hit point.
+	# Find nearest hex to hit point. Transform hex centers to Godot convention.
 	var best_idx: int = -1
 	var best_dot: float = -2.0
 	for i in range(_hex_data.size()):
-		var hc: Vector3 = _hex_data[i]["c"] as Vector3
+		var hc: Vector3 = _g2d(_hex_data[i]["c"] as Vector3)
 		var d: float = hit_point.dot(hc)
 		if d > best_dot:
 			best_dot = d
@@ -894,6 +887,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 
 	if not _conquest_initialized:
+		return
+
+	# Block globe interaction during roll-for-order screen.
+	if _cqs != null and _cqs.current_phase == ConquestData.ConquestPhase.ROLL_FOR_ORDER:
 		return
 
 	# Scroll zoom.
@@ -943,10 +940,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			var delta: Vector2 = event.position - _orbit_drag_prev
 			_orbit_drag_prev = event.position
 			_cam_tracking = false  # Stop auto-tracking during manual orbit.
+			# Horizontal orbit around world Y axis.
+			var yaw_q := Quaternion(Vector3.UP, -delta.x * 0.004)
+			# Vertical tilt around camera right axis (limited to ~40° from equator).
 			var right: Vector3 = _camera.global_transform.basis.x
-			var up: Vector3 = _camera.global_transform.basis.y
-			var rotation_q := Quaternion(up, -delta.x * 0.004) * Quaternion(right, -delta.y * 0.004)
-			_cam_dir = (rotation_q * _cam_dir).normalized()
+			var pitch_q := Quaternion(right, -delta.y * 0.002)
+			_cam_dir = (yaw_q * pitch_q * _cam_dir).normalized()
+			_cam_dir.y = clampf(_cam_dir.y, -0.55, 0.55)
+			_cam_dir = _cam_dir.normalized()
 			return
 
 		# Update drag prev for next frame even when not dragging.
@@ -1024,6 +1025,15 @@ func _setup_ui() -> void:
 	_quit_button.pressed.connect(_request_quit)
 	_ui_layer.add_child(_quit_button)
 
+	# Continue button — used for roll-for-order screen.
+	_continue_button = Button.new()
+	_continue_button.name = "ContinueBtn"
+	_continue_button.text = "Continue"
+	_continue_button.size = Vector2(200, 48)
+	_continue_button.visible = false
+	_continue_button.pressed.connect(_on_continue_pressed)
+	_ui_layer.add_child(_continue_button)
+
 
 # ---------------------------------------------------------------------------
 # HUD drawing (on the Control overlay)
@@ -1044,6 +1054,11 @@ func _on_hud_draw() -> void:
 		_end_phase_button.position = Vector2(vp.x * 0.5 - 200, vp.y - 60)
 	if _end_turn_button != null:
 		_end_turn_button.position = Vector2(vp.x * 0.5 + 30, vp.y - 60)
+
+	# Roll-for-order is a full-screen overlay — draw ONLY that.
+	if _cqs.current_phase == ConquestData.ConquestPhase.ROLL_FOR_ORDER:
+		_draw_roll_for_order_screen(vp, font)
+		return
 
 	_draw_player_roster(vp, font)
 	_draw_phase_hud(vp, font)
@@ -1323,6 +1338,83 @@ func _draw_dice_display(vp: Vector2, font: Font) -> void:
 			Color(1.0, 0.9, 0.2, alpha))
 
 
+## ── Roll-for-order full-screen overlay ─────────────────────────────────────
+func _draw_roll_for_order_screen(vp: Vector2, font: Font) -> void:
+	# Full dark backdrop.
+	_hud_draw.draw_rect(Rect2(Vector2.ZERO, vp), Color(0.04, 0.05, 0.08, 0.95))
+
+	var cx: float = vp.x * 0.5
+	var cy: float = vp.y * 0.5
+
+	# Title.
+	_hud_draw.draw_string(font, Vector2(cx, 80), "ROLL FOR TURN ORDER",
+		HORIZONTAL_ALIGNMENT_CENTER, -1, 28, HUD_ACCENT)
+	_hud_draw.draw_string(font, Vector2(cx, 110), "Each player rolls one die  —  highest goes first",
+		HORIZONTAL_ALIGNMENT_CENTER, -1, 13, HUD_TEXT_DIM)
+
+	# Draw each player's roll result.
+	var rolls: Dictionary = _dice_display_data.get("rolls", {})
+	var order: Array = _dice_display_data.get("order", [])
+	var row_h: float = 72.0
+	var total_h: float = row_h * _cqs.players.size()
+	var start_y: float = cy - total_h * 0.5
+
+	for i in range(order.size()):
+		var pid: int = int(order[i])
+		var player: ConquestData.ConquestPlayer = _cqs.players.get(pid)
+		if player == null:
+			continue
+
+		var ry: float = start_y + float(i) * row_h
+		var row_w: float = 420.0
+		var rx: float = cx - row_w * 0.5
+
+		# Row background — highlight first place.
+		var row_bg: Color = Color(0.15, 0.12, 0.08, 0.6) if i == 0 else Color(0.10, 0.08, 0.06, 0.4)
+		_hud_draw.draw_rect(Rect2(rx, ry, row_w, row_h - 4), row_bg)
+		_hud_draw.draw_rect(Rect2(rx, ry, row_w, row_h - 4), player.color * Color(1, 1, 1, 0.4), false, 1.5)
+
+		# Turn order number.
+		var order_label: String = "#%d" % (i + 1)
+		_hud_draw.draw_string(font, Vector2(rx + 16, ry + 28), order_label,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 22,
+			HUD_ACCENT if i == 0 else HUD_TEXT_DIM)
+
+		# Player icon.
+		var icon_x: float = rx + 65.0
+		var icon_y: float = ry + row_h * 0.5 - 4.0
+		_hud_draw.draw_circle(Vector2(icon_x, icon_y), 18.0, player.color)
+		var initial: String = player.display_name.substr(0, 1).to_upper()
+		_hud_draw.draw_string(font, Vector2(icon_x - 6, icon_y + 6), initial,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 1, 1, 0.9))
+
+		# Player name.
+		_hud_draw.draw_string(font, Vector2(rx + 95, ry + 28), player.display_name,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, player.color)
+
+		# Die result — big die square.
+		var die_x: float = rx + row_w - 65.0
+		var die_y: float = ry + 10.0
+		var die_sz: float = 48.0
+		var die_col: Color = player.color
+		die_col.a = 0.85
+		_hud_draw.draw_rect(Rect2(die_x, die_y, die_sz, die_sz), die_col)
+		_hud_draw.draw_rect(Rect2(die_x, die_y, die_sz, die_sz), Color(1, 1, 1, 0.5), false, 2.0)
+		var roll_val: int = int(rolls.get(pid, 0))
+		_hud_draw.draw_string(font, Vector2(die_x + die_sz * 0.5, die_y + die_sz * 0.65),
+			str(roll_val), HORIZONTAL_ALIGNMENT_CENTER, -1, 24, Color(1, 1, 1, 1))
+
+		# "FIRST" label for winner.
+		if i == 0:
+			_hud_draw.draw_string(font, Vector2(rx + row_w - 130, ry + 48), "FIRST",
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 10, HUD_ACCENT)
+
+	# Position continue button at bottom-center.
+	if _continue_button != null:
+		_continue_button.position = Vector2(cx - 100, start_y + total_h + 30)
+		_continue_button.size = Vector2(200, 48)
+
+
 ## ── Game over overlay ─────────────────────────────────────────────────────
 func _draw_game_over_overlay(vp: Vector2, font: Font) -> void:
 	_hud_draw.draw_rect(Rect2(Vector2.ZERO, vp), Color(0.0, 0.0, 0.0, 0.55))
@@ -1383,8 +1475,9 @@ func _init_conquest() -> void:
 	# Phase 1: Roll for turn order.
 	var rolls: Dictionary = ConquestSpawn.roll_for_order(_cqs, _combat_obj)
 	_dice_display_data = {"roll_for_order": true, "rolls": rolls, "order": _cqs.turn_order}
-	_dice_display_timer = 4.0  # Show roll results for 4 seconds.
-	_setup_timer = 4.0  # After timer, advance to draft.
+	# Show the roll screen — player must click Continue to advance.
+	if _continue_button != null:
+		_continue_button.visible = true
 	_log_combat("Rolling for turn order...")
 	for pid in _cqs.turn_order:
 		var player: ConquestData.ConquestPlayer = _cqs.players.get(pid)
@@ -1653,6 +1746,15 @@ func _handle_fortify_click(territory_id: String) -> void:
 # ---------------------------------------------------------------------------
 # Button handlers
 # ---------------------------------------------------------------------------
+func _on_continue_pressed() -> void:
+	if _cqs == null:
+		return
+	if _cqs.current_phase == ConquestData.ConquestPhase.ROLL_FOR_ORDER:
+		if _continue_button != null:
+			_continue_button.visible = false
+		_advance_setup_phase()
+
+
 func _on_end_phase_pressed() -> void:
 	if _cqs == null:
 		return
