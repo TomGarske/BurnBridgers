@@ -1,24 +1,28 @@
 extends Control
 const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
+const _FleetSpawner := preload("res://scripts/shared/fleet_spawner.gd")
 
 # ---------------------------------------------------------------------------
 # Node references
 # ---------------------------------------------------------------------------
-@onready var lobby_id_label: Label = $LobbyCard/VBoxContainer/LobbyIdLabel
-@onready var lobby_status_label: Label = $LobbyCard/VBoxContainer/LobbyStatusLabel
-@onready var game_mode_title_label: Label = $LobbyCard/VBoxContainer/GameModeTitle
-@onready var game_mode_selector: OptionButton = $LobbyCard/VBoxContainer/GameModeSelector
-@onready var game_mode_description_label: Label = $LobbyCard/VBoxContainer/GameModeDescriptionLabel
-@onready var player_list: VBoxContainer = $LobbyCard/VBoxContainer/PlayerList
-@onready var handshake_status_label: Label = $LobbyCard/VBoxContainer/HandshakeStatusLabel
-@onready var friends_title: Label = $LobbyCard/VBoxContainer/FriendsTitle
-@onready var friends_list: VBoxContainer = $LobbyCard/VBoxContainer/FriendsScroll/FriendsList
-@onready var invite_note_label: Label = $LobbyCard/VBoxContainer/InviteNoteLabel
-@onready var ship_class_selector: OptionButton = $LobbyCard/VBoxContainer/ShipClassSelector
-@onready var ship_class_desc: Label = $LobbyCard/VBoxContainer/ShipClassDesc
-@onready var ready_button: Button = $LobbyCard/VBoxContainer/ReadyButton
-@onready var start_button: Button = $LobbyCard/VBoxContainer/StartButton
-@onready var back_button: Button = $LobbyCard/VBoxContainer/BackButton
+# Left panel — config + actions
+@onready var lobby_id_label: Label = $LobbyCard/MainHBox/LeftPanel/LobbyIdLabel
+@onready var lobby_status_label: Label = $LobbyCard/MainHBox/LeftPanel/LobbyStatusLabel
+@onready var game_mode_title_label: Label = $LobbyCard/MainHBox/LeftPanel/GameModeTitle
+@onready var game_mode_selector: OptionButton = $LobbyCard/MainHBox/LeftPanel/GameModeSelector
+@onready var game_mode_description_label: Label = $LobbyCard/MainHBox/LeftPanel/GameModeDescriptionLabel
+@onready var ship_class_title: Label = $LobbyCard/MainHBox/LeftPanel/ShipClassTitle
+@onready var ship_class_selector: OptionButton = $LobbyCard/MainHBox/LeftPanel/ShipClassSelector
+@onready var ship_class_desc: Label = $LobbyCard/MainHBox/LeftPanel/ShipClassDesc
+@onready var ready_button: Button = $LobbyCard/MainHBox/LeftPanel/ReadyButton
+@onready var start_button: Button = $LobbyCard/MainHBox/LeftPanel/StartButton
+@onready var back_button: Button = $LobbyCard/MainHBox/LeftPanel/BackButton
+# Right panel — roster + invites
+@onready var player_list: VBoxContainer = $LobbyCard/MainHBox/RightPanel/PlayerList
+@onready var handshake_status_label: Label = $LobbyCard/MainHBox/RightPanel/HandshakeStatusLabel
+@onready var friends_title: Label = $LobbyCard/MainHBox/RightPanel/FriendsTitle
+@onready var friends_list: VBoxContainer = $LobbyCard/MainHBox/RightPanel/FriendsScroll/FriendsList
+@onready var invite_note_label: Label = $LobbyCard/MainHBox/RightPanel/InviteNoteLabel
 @onready var refresh_timer: Timer = $RefreshTimer
 
 var _lobby_members_updated_handler: Callable
@@ -91,6 +95,8 @@ func _apply_warm_tactical_theme() -> void:
 	UiStyleScript.style_body(handshake_status_label, true)
 	UiStyleScript.style_body(invite_note_label, true)
 	UiStyleScript.style_title(friends_title, 16)
+	if ship_class_title != null:
+		UiStyleScript.style_title(ship_class_title, 16)
 	UiStyleScript.style_button(ready_button)
 	UiStyleScript.style_button(start_button)
 	UiStyleScript.style_button(back_button)
@@ -156,6 +162,7 @@ func _on_selected_game_mode_changed(mode_id: String) -> void:
 		game_mode_description_label.text = mode_desc
 	else:
 		game_mode_description_label.text = "%s\n%s" % [subtitle, mode_desc]
+	_update_ship_class_section_for_mode(mode_id)
 	_refresh_crew_status()
 	game_mode_selector.disabled = not SteamManager.is_host
 
@@ -170,11 +177,50 @@ func _setup_ship_class_selector() -> void:
 
 func _on_ship_class_selected(index: int) -> void:
 	GameManager.set_local_ship_class(index)
-	_update_ship_class_desc(index)
+	if str(GameManager.get_selected_game_mode().get("id", "")) != "fleet_battle":
+		_update_ship_class_desc(index)
 
 func _update_ship_class_desc(index: int) -> void:
 	if ship_class_desc != null and index >= 0 and index < ShipClassConfig.CLASS_DESCRIPTIONS.size():
 		ship_class_desc.text = ShipClassConfig.CLASS_DESCRIPTIONS[index]
+
+
+func _fleet_battle_preview_text() -> String:
+	var comp: Array = _FleetSpawner.DEFAULT_FLEET_COMPOSITION
+	var galleys: int = 0
+	var brigs: int = 0
+	var schooners: int = 0
+	for cls in comp:
+		match int(cls):
+			ShipClassConfig.ShipClass.GALLEY:
+				galleys += 1
+			ShipClassConfig.ShipClass.BRIG:
+				brigs += 1
+			ShipClassConfig.ShipClass.SCHOONER:
+				schooners += 1
+	var parts: PackedStringArray = []
+	if galleys > 0:
+		parts.append("%d Galley%s" % [galleys, " (flagship)" if galleys == 1 else "s"])
+	if brigs > 0:
+		parts.append("%d Brig%s" % [brigs, "s" if brigs != 1 else ""])
+	if schooners > 0:
+		parts.append("%d Schooner%s" % [schooners, "s" if schooners != 1 else ""])
+	return "Your Fleet: " + " + ".join(parts)
+
+
+func _update_ship_class_section_for_mode(mode_id: String) -> void:
+	var is_fleet: bool = mode_id == "fleet_battle"
+	if ship_class_title != null:
+		ship_class_title.visible = not is_fleet
+	if ship_class_selector != null:
+		ship_class_selector.visible = not is_fleet
+	if ship_class_desc == null:
+		return
+	if is_fleet:
+		ship_class_desc.text = _fleet_battle_preview_text()
+	else:
+		_update_ship_class_desc(GameManager.local_ship_class)
+
 
 func _refresh_player_list(_peer_id: int) -> void:
 	# Clear existing entries
@@ -206,9 +252,14 @@ func _refresh_player_list(_peer_id: int) -> void:
 		var label := Label.new()
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var ready_text: String = "Ready" if SteamManager.is_member_ready(member_id) else "Not Ready"
-		var cls: int = GameManager.get_ship_class_for_steam_id(member_id)
-		var cls_name: String = ShipClassConfig.CLASS_NAMES[cls] if cls >= 0 and cls < ShipClassConfig.CLASS_COUNT else "Brig"
-		label.text = "%s [%s] (%s)" % [member_name, cls_name, ready_text]
+		var mode_id: String = str(GameManager.get_selected_game_mode().get("id", ""))
+		var role_label: String
+		if mode_id == "fleet_battle":
+			role_label = "Fleet Cmdr"
+		else:
+			var cls: int = GameManager.get_ship_class_for_steam_id(member_id)
+			role_label = ShipClassConfig.CLASS_NAMES[cls] if cls >= 0 and cls < ShipClassConfig.CLASS_COUNT else "Brig"
+		label.text = "%s [%s] (%s)" % [member_name, role_label, ready_text]
 		UiStyleScript.style_body(label)
 		row.add_child(label)
 

@@ -117,6 +117,7 @@ func rating_color() -> Color:
 
 ## Format match time as M:SS.
 func format_time() -> String:
-	var mins: int = int(match_duration) / 60
-	var secs: int = int(match_duration) % 60
+	var total_s: int = int(floor(match_duration))
+	var mins: int = int(floor(float(total_s) / 60.0))
+	var secs: int = total_s - mins * 60
 	return "%d:%02d" % [mins, secs]

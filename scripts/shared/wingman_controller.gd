@@ -82,7 +82,10 @@ func update(delta: float) -> void:
 
 	_game_time_elapsed += delta
 	_tick_timers(delta)
-	_update_combat_context()
+	# Only update combat context for combat orders — FORM_UP/HOLD don't need it
+	# and the bearing_to_target_deg it sets would interfere with formation steering.
+	if current_order == FleetOrder.ATTACK_MY_TARGET or current_order == FleetOrder.BREAK_AND_ATTACK:
+		_update_combat_context()
 
 	steer_left = 0.0
 	steer_right = 0.0
@@ -99,7 +102,10 @@ func update(delta: float) -> void:
 		FleetOrder.BREAK_AND_ATTACK:
 			_tick_break_and_attack(delta)
 
-	_adjust_sail_for_turn()
+	# Only adjust sail for combat turns when in combat orders.
+	# In FORM_UP and HOLD_POSITION, the order logic sets sail state directly.
+	if current_order == FleetOrder.ATTACK_MY_TARGET or current_order == FleetOrder.BREAK_AND_ATTACK:
+		_adjust_sail_for_turn()
 	_manage_crew()
 
 

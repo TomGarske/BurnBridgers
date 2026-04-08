@@ -323,18 +323,7 @@ func _on_confirm_join_button_pressed() -> void:
 		DebugOverlay.log_message("[HomeScreen] Invalid lobby ID entered.", true)
 
 func _on_test_button_pressed() -> void:
-	if SteamManager != null and SteamManager.lobby_id != 0:
-		SteamManager.leave_lobby()
-	if multiplayer.multiplayer_peer != null:
-		multiplayer.multiplayer_peer.close()
-		multiplayer.multiplayer_peer = null
-	GameManager.setup_offline_test()
-	# Default to Fleet Battle for solo testing (must be after setup_offline_test
-	# which resets the mode to default).  Set directly since RPC is unavailable offline.
-	GameManager.selected_game_mode_id = "fleet_battle"
-	var mode: Dictionary = GameManager.get_selected_game_mode()
-	var test_scene_path: String = str(mode.get("scene_path", GameManager.MATCH_SCENE_PATH))
-	get_tree().change_scene_to_file(test_scene_path)
+	GameManager.start_offline_test_match("fleet_battle")
 
 func _on_exit_button_pressed() -> void:
 	quit_confirm_dialog.title = "Exit Ironwake"

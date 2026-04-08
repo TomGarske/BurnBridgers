@@ -57,9 +57,9 @@ func draw_minimap(
 		my_index: int,
 		formation_lines: Array[Dictionary] = []
 	) -> void:
-	# Position: bottom-right corner.
-	var panel_x: float = vp.x - MAP_SIZE - MARGIN
-	var panel_y: float = vp.y - MAP_SIZE - MARGIN
+	# Position: bottom-left corner (above fleet order HUD).
+	var panel_x: float = MARGIN
+	var panel_y: float = vp.y - MAP_SIZE - MARGIN - 70.0  # 70px room for fleet order panel below
 
 	# Background.
 	canvas.draw_rect(Rect2(panel_x, panel_y, MAP_SIZE, MAP_SIZE), BG_COLOR)

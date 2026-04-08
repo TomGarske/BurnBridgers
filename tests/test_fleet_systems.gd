@@ -157,8 +157,7 @@ func _test_wingman_controller() -> void:
 	# Just verify the class loads and enums exist.
 	var wc := WingmanController.new()
 	assert(wc.current_order == WingmanController.FleetOrder.FORM_UP, "FAIL: default order should be FORM_UP")
-	assert(WingmanController.ORDER_COUNT == 4, "FAIL: should have 4 orders")
-	assert(WingmanController.ORDER_NAMES.size() == 4, "FAIL: should have 4 order names")
+	assert(WingmanController.ORDER_NAMES.size() == WingmanController.ORDER_COUNT, "FAIL: order names should match ORDER_COUNT")
 
 	wc.set_order(WingmanController.FleetOrder.ATTACK_MY_TARGET)
 	assert(wc.current_order == WingmanController.FleetOrder.ATTACK_MY_TARGET, "FAIL: order not set")
@@ -173,7 +172,6 @@ func _test_wingman_controller() -> void:
 
 func _test_battery_sides() -> void:
 	print("--- BatteryController Sides ---")
-	var BatteryController = preload("res://scripts/shared/battery_controller.gd")
 
 	# Verify all 4 sides have correct perpendicular directions.
 	var hull := Vector2(0.0, -1.0)  # Facing north.
@@ -333,8 +331,7 @@ func _test_fleet_command_menu() -> void:
 	assert(menu.hovered_sector == -1, "FAIL: no sector hovered initially")
 	print("  PASS: initial state correct")
 
-	assert(FleetCommandMenu.SECTOR_COUNT == 4, "FAIL: should have 4 sectors")
-	assert(FleetCommandMenu.SECTORS.size() == 4, "FAIL: SECTORS array should have 4 entries")
+	assert(FleetCommandMenu.SECTORS.size() == FleetCommandMenu.SECTOR_COUNT, "FAIL: SECTORS should match SECTOR_COUNT")
 	print("  PASS: sector definitions correct")
 
 	# Simulate a quick tap (pressed + released before threshold).
@@ -410,7 +407,6 @@ func _test_crew_ai_controller() -> void:
 	print("  PASS: idle distributes evenly (%s)" % str(alloc))
 
 	# Test battery_wants_crew.
-	var BatteryController = preload("res://scripts/shared/battery_controller.gd")
 	var bat := BatteryController.new()
 	bat.state = BatteryController.BatteryState.RELOADING
 	assert(CrewAiController._battery_wants_crew(bat), "FAIL: RELOADING battery should want crew")

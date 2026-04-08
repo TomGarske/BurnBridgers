@@ -67,6 +67,8 @@ const ROUT_DISPLAY_DELAY: float = 3.0
 var _minimap: MinimapRenderer = null
 ## Radial fleet command menu.
 var _radial_menu: FleetCommandMenu = null
+## Other peers' wingman orders (HUD only; each peer runs local wingman AI).
+var _remote_fleet_orders: Dictionary = {}
 ## All player fleet indices (across all peers) — for team 0 tracking.
 var _all_player_fleet_indices: Array[int] = []
 ## Indices of ships this local peer owns (flagship + wingmen) — for state broadcast.
@@ -90,8 +92,9 @@ const PLAYER_FLEET_PALETTES: Array = [
 
 
 func _ready() -> void:
-	# Disable local sim — we handle fleet spawning ourselves.
+	# Disable local sim and whirlpool — we handle fleet spawning ourselves.
 	local_sim_enabled = false
+	whirlpool_enabled = false
 	# Enable independent camera zoom for fleet-scale viewing.
 	_camera_zoom_independent = true
 	# Set up PVE elimination win condition.
@@ -100,6 +103,9 @@ func _ready() -> void:
 	# Call parent _ready() — this will init helpers, call super._ready() (iso_arena),
 	# spawn the placeholder player, and skip local sim bots.
 	super._ready()
+	# Disable ocean ambient noise (procedural static) — fleet mode uses music only.
+	if _sound != null:
+		_sound.stop_ocean_ambient()
 	# Now set up fleet registry and connect to win condition.
 	pve_win.fleet_registry = _fleet_registry
 	# Init rout controller, scoreboard, minimap, and radial menu.
@@ -118,6 +124,7 @@ func _ready() -> void:
 	# Set initial zoom wider for fleet view.
 	_zoom = 0.06
 	_zoom_target = 0.06
+	_remote_fleet_orders.clear()
 	# Register fleet order input.
 	_register_fleet_inputs()
 
@@ -365,6 +372,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		# Block individual crew station keys (1-9 for crew) — already consumed above for 1-5.
 		# Keys 6-9 would fall through to parent, which is fine.
+	# Fleet-scale zoom: larger steps than parent (1.15) so scroll reaches wide zoom faster.
+	if _camera_zoom_independent and event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			_zoom_target = clampf(_zoom_target * 1.25, _ZOOM_MIN, _ZOOM_MAX)
+			get_viewport().set_input_as_handled()
+			return
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_zoom_target = clampf(_zoom_target / 1.25, _ZOOM_MIN, _ZOOM_MAX)
+			get_viewport().set_input_as_handled()
+			return
 	super._unhandled_input(event)
 
 
@@ -491,7 +508,7 @@ func _trigger_fleet_rout(losing_team: int, winning_team: int) -> void:
 			for bat_key in BATTERY_CYCLE_KEYS:
 				var bat: Variant = _players[idx].get(bat_key)
 				if bat != null:
-					bat.state = _BatteryController.BatteryState.DISABLED
+					bat.state = BatteryController.BatteryState.DISABLED
 
 
 ## Tick rout behavior: move fleeing ships and check for despawn / winner declaration.
@@ -554,6 +571,15 @@ func _apply_fleet_order(order: int) -> void:
 			if order == _WingmanController.FleetOrder.ATTACK_MY_TARGET:
 				_update_wingman_targets()
 	_play_tone(350.0, 0.05, 0.12)
+	if multiplayer.has_multiplayer_peer():
+		_rpc_fleet_order_changed.rpc(multiplayer.get_unique_id(), order)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_fleet_order_changed(sender_peer_id: int, order: int) -> void:
+	if order < 0 or order >= _WingmanController.ORDER_COUNT:
+		return
+	_remote_fleet_orders[sender_peer_id] = order
 
 
 ## Update wingman targets to engage nearest enemy to flagship.
@@ -839,3 +865,22 @@ func _draw_fleet_status_hud() -> void:
 		draw_string(font, Vector2(x, y + 24.0), "Rout at: %d remaining" % elim_threshold, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.7, 0.6, 0.55, 0.8))
 	else:
 		draw_string(font, Vector2(x, y + 24.0), "Fleeing the battle!", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.9, 0.8, 0.3, 0.85))
+
+	if multiplayer.has_multiplayer_peer() and GameManager != null:
+		var my_id: int = multiplayer.get_unique_id()
+		var ally_lines: PackedStringArray = []
+		for pid in GameManager.players.keys():
+			var ipid: int = int(pid)
+			if ipid == my_id:
+				continue
+			if not _remote_fleet_orders.has(ipid):
+				continue
+			var uname: String = str(GameManager.players[pid].get("username", "Player"))
+			var oid: int = int(_remote_fleet_orders[ipid])
+			var oname: String = _WingmanController.ORDER_NAMES[oid] if oid >= 0 and oid < _WingmanController.ORDER_COUNT else "?"
+			ally_lines.append("%s: %s" % [uname, oname])
+		if not ally_lines.is_empty():
+			var ay: float = y + 44.0
+			draw_string(font, Vector2(x, ay), "Allies — fleet order:", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.55, 0.75, 0.95, 0.85))
+			for li in range(ally_lines.size()):
+				draw_string(font, Vector2(x, ay + 12.0 + float(li) * 12.0), ally_lines[li], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.65, 0.82, 0.98, 0.9))
