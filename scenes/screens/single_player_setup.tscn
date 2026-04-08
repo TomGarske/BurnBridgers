@@ -226,6 +226,7 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
 text = "+ Add Opponent"
 
 [node name="StartTerritoryRow" type="HBoxContainer" parent="ConfigPanel/VBoxContainer/ConquestSection"]
+visible = false
 layout_mode = 2
 
 [node name="StartTerritoryLabel" type="Label" parent="ConfigPanel/VBoxContainer/ConquestSection/StartTerritoryRow"]

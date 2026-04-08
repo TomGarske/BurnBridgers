@@ -153,12 +153,14 @@ horizontal_alignment = 1
 autowrap_mode = 2
 
 [node name="ShipClassSelector" type="OptionButton" parent="LeftMenuPanel/VBoxContainer"]
+visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
 theme_override_font_sizes/font_size = 14
 theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
 
 [node name="ShipClassDesc" type="Label" parent="LeftMenuPanel/VBoxContainer"]
+visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.53, 0.62, 0.75, 0.85)
 theme_override_font_sizes/font_size = 10
@@ -228,10 +230,11 @@ theme_override_constants/separation = 8
 layout_mode = 2
 theme_override_colors/font_color = Color(0.937255, 0.964706, 1, 1)
 theme_override_font_sizes/font_size = 24
-text = "Join Operation"
+text = "Public Ironwake Games"
 horizontal_alignment = 1
 
 [node name="JoinLobbyIdInput" type="LineEdit" parent="RightLobbyPanel/VBoxContainer" unique_id=1339839877]
+visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
 theme_override_colors/font_placeholder_color = Color(0.56, 0.64, 0.77, 0.85)
@@ -240,6 +243,7 @@ theme_override_styles/focus = SubResource("StyleBoxFlat_input")
 placeholder_text = "Enter Lobby ID"
 
 [node name="ConfirmJoinButton" type="Button" parent="RightLobbyPanel/VBoxContainer" unique_id=469737823]
+visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
 theme_override_font_sizes/font_size = 14
@@ -249,9 +253,11 @@ theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
 text = "Connect"
 
 [node name="Separator1" type="HSeparator" parent="RightLobbyPanel/VBoxContainer" unique_id=1749935040]
+visible = false
 layout_mode = 2
 
 [node name="PublicLobbiesTitle" type="Label" parent="RightLobbyPanel/VBoxContainer" unique_id=1657681715]
+visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(0.788235, 0.858824, 0.960784, 1)
 text = "Public Ironwake Operations"

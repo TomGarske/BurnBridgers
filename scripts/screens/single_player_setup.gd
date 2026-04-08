@@ -15,8 +15,8 @@ const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
 @onready var ship_class_desc: Label = $ConfigPanel/VBoxContainer/ShipClassDesc
 # Conquest-specific
 @onready var conquest_section: VBoxContainer = $ConfigPanel/VBoxContainer/ConquestSection
-@onready var faction_count_label: Label = $ConfigPanel/VBoxContainer/ConquestSection/FactionCountRow/FactionCountLabel
-@onready var faction_count_spinner: SpinBox = $ConfigPanel/VBoxContainer/ConquestSection/FactionCountRow/FactionCountSpinner
+@onready var opponents_grid: GridContainer = $ConfigPanel/VBoxContainer/ConquestSection/OpponentsGrid
+@onready var add_opponent_button: Button = $ConfigPanel/VBoxContainer/ConquestSection/AddOpponentButton
 @onready var start_territory_label: Label = $ConfigPanel/VBoxContainer/ConquestSection/StartTerritoryRow/StartTerritoryLabel
 @onready var start_territory_selector: OptionButton = $ConfigPanel/VBoxContainer/ConquestSection/StartTerritoryRow/StartTerritorySelector
 # Buttons
@@ -24,6 +24,25 @@ const UiStyleScript := preload("res://scripts/ui/ui_style.gd")
 @onready var back_button: Button = $ConfigPanel/VBoxContainer/BackButton
 
 var _game_mode_ids: Array[String] = []
+
+# Conquest opponents: array of { difficulty: int }  (0=Easy, 1=Normal, 2=Hard, 3=Admiral)
+const DIFFICULTY_NAMES: Array[String] = ["Easy", "Normal", "Hard", "Admiral"]
+const DIFFICULTY_COLORS: Array[Color] = [
+	Color(0.45, 0.80, 0.45, 1.0),  # Easy — green
+	Color(0.90, 0.85, 0.40, 1.0),  # Normal — gold
+	Color(0.95, 0.50, 0.25, 1.0),  # Hard — orange
+	Color(0.95, 0.25, 0.25, 1.0),  # Admiral — red
+]
+const FACTION_ICONS: Array[String] = [
+	"\u2694",  # Swords (player)
+	"\u2620",  # Skull
+	"\u2693",  # Anchor
+	"\u269A",  # Staff
+	"\u2726",  # Star
+	"\u2736",  # Star 6
+]
+const MAX_OPPONENTS: int = 5
+var _conquest_opponents: Array[Dictionary] = []
 
 # ---------------------------------------------------------------------------
 # Lifecycle
@@ -39,6 +58,7 @@ func _ready() -> void:
 func _apply_theme() -> void:
 	UiStyleScript.style_button(launch_button)
 	UiStyleScript.style_button(back_button)
+	UiStyleScript.style_button(add_opponent_button)
 	game_type_selector.add_theme_color_override("font_color", UiStyleScript.TEXT_PRIMARY)
 	difficulty_selector.add_theme_color_override("font_color", UiStyleScript.TEXT_PRIMARY)
 	ship_class_selector.add_theme_color_override("font_color", UiStyleScript.TEXT_PRIMARY)
@@ -82,10 +102,8 @@ func _on_game_type_selected(index: int) -> void:
 # ---------------------------------------------------------------------------
 func _setup_difficulty_selector() -> void:
 	difficulty_selector.clear()
-	difficulty_selector.add_item("Easy")
-	difficulty_selector.add_item("Normal")
-	difficulty_selector.add_item("Hard")
-	difficulty_selector.add_item("Admiral")
+	for dname in DIFFICULTY_NAMES:
+		difficulty_selector.add_item(dname)
 	difficulty_selector.select(1)  # Default to Normal
 
 # ---------------------------------------------------------------------------
@@ -109,21 +127,143 @@ func _update_ship_class_desc(index: int) -> void:
 		ship_class_desc.text = ShipClassConfig.CLASS_DESCRIPTIONS[index]
 
 # ---------------------------------------------------------------------------
-# Conquest-specific options
+# Conquest opponents panel
 # ---------------------------------------------------------------------------
 func _setup_conquest_options() -> void:
-	faction_count_spinner.min_value = 1
-	faction_count_spinner.max_value = 5
-	faction_count_spinner.value = 3
-	faction_count_spinner.step = 1
+	if not add_opponent_button.pressed.is_connected(_on_add_opponent_pressed):
+		add_opponent_button.pressed.connect(_on_add_opponent_pressed)
+
+	# Default: 3 opponents at Normal difficulty.
+	_conquest_opponents.clear()
+	for i in range(3):
+		_conquest_opponents.append({"difficulty": 1})
 
 	start_territory_selector.clear()
 	start_territory_selector.add_item("Random")
-	# Placeholder territories matching conquest_arena grid.
 	for r in range(3):
 		for c in range(4):
 			start_territory_selector.add_item("Region T_%d_%d" % [r, c])
 	start_territory_selector.select(0)
+
+	_rebuild_opponents_grid()
+
+
+func _on_add_opponent_pressed() -> void:
+	if _conquest_opponents.size() >= MAX_OPPONENTS:
+		return
+	_conquest_opponents.append({"difficulty": 1})
+	_rebuild_opponents_grid()
+
+
+func _on_remove_opponent_pressed(index: int) -> void:
+	if index < 0 or index >= _conquest_opponents.size():
+		return
+	_conquest_opponents.remove_at(index)
+	_rebuild_opponents_grid()
+
+
+func _on_cycle_difficulty_pressed(index: int) -> void:
+	if index < 0 or index >= _conquest_opponents.size():
+		return
+	var current: int = int(_conquest_opponents[index].get("difficulty", 1))
+	_conquest_opponents[index]["difficulty"] = (current + 1) % DIFFICULTY_NAMES.size()
+	_rebuild_opponents_grid()
+
+
+func _rebuild_opponents_grid() -> void:
+	# Clear existing children.
+	for child in opponents_grid.get_children():
+		child.queue_free()
+
+	# Player slot (always first, non-removable).
+	var player_slot := _create_slot_panel(FACTION_ICONS[0], "Player", UiStyleScript.ACCENT_SOFT, false, -1)
+	opponents_grid.add_child(player_slot)
+
+	# Bot slots.
+	for i in range(_conquest_opponents.size()):
+		var diff_idx: int = int(_conquest_opponents[i].get("difficulty", 1))
+		var diff_name: String = DIFFICULTY_NAMES[diff_idx]
+		var diff_col: Color = DIFFICULTY_COLORS[diff_idx]
+		var icon: String = FACTION_ICONS[(i + 1) % FACTION_ICONS.size()]
+		var slot := _create_slot_panel(icon, diff_name, diff_col, true, i)
+		opponents_grid.add_child(slot)
+
+	# Update add button visibility.
+	add_opponent_button.visible = _conquest_opponents.size() < MAX_OPPONENTS
+	add_opponent_button.text = "+ Add Opponent (%d/%d)" % [_conquest_opponents.size(), MAX_OPPONENTS]
+
+
+func _create_slot_panel(icon_text: String, label_text: String, accent: Color, removable: bool, index: int) -> PanelContainer:
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(120, 80)
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.08, 0.11, 0.18, 0.92)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.border_color = accent * Color(1, 1, 1, 0.6)
+	style.content_margin_left = 6.0
+	style.content_margin_top = 4.0
+	style.content_margin_right = 6.0
+	style.content_margin_bottom = 4.0
+	panel.add_theme_stylebox_override("panel", style)
+
+	var vbox := VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 2)
+	panel.add_child(vbox)
+
+	# Icon.
+	var icon_label := Label.new()
+	icon_label.text = icon_text
+	icon_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	icon_label.add_theme_font_size_override("font_size", 24)
+	icon_label.add_theme_color_override("font_color", accent)
+	vbox.add_child(icon_label)
+
+	# Name / difficulty label.
+	var name_label := Label.new()
+	name_label.text = label_text
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 10)
+	name_label.add_theme_color_override("font_color", accent)
+	vbox.add_child(name_label)
+
+	if removable:
+		var btn_row := HBoxContainer.new()
+		btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		btn_row.add_theme_constant_override("separation", 4)
+		vbox.add_child(btn_row)
+
+		# Cycle difficulty button.
+		var diff_btn := Button.new()
+		diff_btn.text = "\u21BB"  # cycle arrow
+		diff_btn.tooltip_text = "Cycle difficulty"
+		diff_btn.custom_minimum_size = Vector2(28, 22)
+		diff_btn.add_theme_font_size_override("font_size", 12)
+		diff_btn.add_theme_color_override("font_color", UiStyleScript.TEXT_PRIMARY)
+		UiStyleScript.style_button(diff_btn)
+		diff_btn.pressed.connect(_on_cycle_difficulty_pressed.bind(index))
+		btn_row.add_child(diff_btn)
+
+		# Remove button.
+		var remove_btn := Button.new()
+		remove_btn.text = "\u2715"  # X
+		remove_btn.tooltip_text = "Remove opponent"
+		remove_btn.custom_minimum_size = Vector2(28, 22)
+		remove_btn.add_theme_font_size_override("font_size", 12)
+		remove_btn.add_theme_color_override("font_color", Color(0.95, 0.35, 0.30, 1.0))
+		UiStyleScript.style_button(remove_btn)
+		remove_btn.pressed.connect(_on_remove_opponent_pressed.bind(index))
+		btn_row.add_child(remove_btn)
+
+	return panel
+
 
 # ---------------------------------------------------------------------------
 # Per-mode UI visibility
@@ -138,13 +278,13 @@ func _update_ui_for_mode(mode_id: String) -> void:
 	else:
 		game_type_desc.text = "%s\n%s" % [subtitle, desc]
 
-	# Ship class: hidden for fleet_battle (fleet composition is fixed).
-	var show_ship_class: bool = mode_id != "fleet_battle"
+	# Ship class: hidden for fleet_battle and conquest.
+	var show_ship_class: bool = mode_id != "fleet_battle" and mode_id != "conquest"
 	ship_class_title.visible = show_ship_class
 	ship_class_selector.visible = show_ship_class
 	ship_class_desc.visible = show_ship_class
 
-	# Bot count: shown for ironwake and fleet_battle; conquest uses faction count instead.
+	# Bot count: shown for ironwake and fleet_battle; conquest uses opponents grid.
 	var show_bot_count: bool = mode_id != "conquest"
 	bot_count_label.visible = show_bot_count
 	bot_count_spinner.visible = show_bot_count
@@ -178,13 +318,14 @@ func _on_launch_button_pressed() -> void:
 	GameManager.sp_bot_count = int(bot_count_spinner.value)
 	GameManager.sp_difficulty = difficulty_selector.selected
 	if mode_id == "conquest":
-		GameManager.sp_conquest_factions = int(faction_count_spinner.value)
+		GameManager.sp_conquest_factions = _conquest_opponents.size()
 		var territory_idx: int = start_territory_selector.selected
 		if territory_idx <= 0:
 			GameManager.sp_conquest_start_territory = ""
 		else:
-			# Convert index back to territory id (offset by 1 for "Random").
+			# Convert dropdown index back to territory id (offset by 1 for "Random").
 			var adjusted: int = territory_idx - 1
+			@warning_ignore("integer_division")
 			var row: int = adjusted / 4
 			var col: int = adjusted % 4
 			GameManager.sp_conquest_start_territory = "t_%d_%d" % [row, col]
