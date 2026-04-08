@@ -1,0 +1,55 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scripts/game_modes/conquest_arena.gd" id="1_conquest"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
+sky_top_color = Color(0.02, 0.02, 0.05, 1)
+sky_horizon_color = Color(0.04, 0.04, 0.1, 1)
+ground_bottom_color = Color(0.01, 0.01, 0.03, 1)
+ground_horizon_color = Color(0.02, 0.02, 0.05, 1)
+
+[sub_resource type="Sky" id="Sky_1"]
+sky_material = SubResource("ProceduralSkyMaterial_1")
+
+[sub_resource type="Environment" id="Environment_1"]
+background_mode = 2
+sky = SubResource("Sky_1")
+ambient_light_source = 3
+ambient_light_color = Color(1, 1, 1, 1)
+ambient_light_energy = 1.0
+tonemap_mode = 1
+
+[sub_resource type="SphereMesh" id="SphereMesh_globe"]
+radius = 1.0
+height = 2.0
+radial_segments = 128
+rings = 64
+
+[sub_resource type="SphereMesh" id="SphereMesh_atmo"]
+radius = 1.025
+height = 2.05
+
+[node name="ConquestArena" type="Node3D"]
+script = ExtResource("1_conquest")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_1")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+visible = false
+transform = Transform3D(0, 0, -1, 0, 1, 0, 1, 0, 0, 0, 0, 0)
+light_color = Color(1, 1, 1, 1)
+light_energy = 0.0
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 3)
+near = 0.01
+far = 100.0
+
+[node name="GlobeRoot" type="Node3D" parent="."]
+
+[node name="Globe" type="MeshInstance3D" parent="GlobeRoot"]
+mesh = SubResource("SphereMesh_globe")
+
+[node name="Atmosphere" type="MeshInstance3D" parent="GlobeRoot"]
+mesh = SubResource("SphereMesh_atmo")

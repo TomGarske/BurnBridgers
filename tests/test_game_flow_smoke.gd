@@ -17,7 +17,7 @@ func _run() -> void:
 	if GameManager.get_game_modes().is_empty():
 		errs.append("GAME_MODES is empty")
 
-	for mid: String in ["ironwake", "fleet_battle"]:
+	for mid: String in ["ironwake", "fleet_battle", "conquest"]:
 		var mode: Dictionary = GameManager.get_game_mode(mid)
 		if mode.is_empty():
 			errs.append("missing game mode: %s" % mid)

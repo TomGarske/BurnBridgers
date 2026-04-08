@@ -1,0 +1,13 @@
+"DepotBuildConfig"
+{
+	"DepotID" "__DEPOT_ID_LINUX__"
+	"ContentRoot" "."
+	"FileMapping"
+	{
+		"LocalPath" "*"
+		"DepotPath" "."
+		"recursive" "1"
+	}
+	"FileExclusion" "*.debug"
+	"FileExclusion" "*.tmp"
+}
