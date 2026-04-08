@@ -1,0 +1,268 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://scripts/screens/single_player_setup.gd" id="1_sp_setup"]
+[ext_resource type="Script" path="res://scripts/screens/home_screen_background.gd" id="2_home_screen_background"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_config_panel"]
+content_margin_left = 18.0
+content_margin_top = 16.0
+content_margin_right = 18.0
+content_margin_bottom = 16.0
+bg_color = Color(0.0627451, 0.0862745, 0.133333, 0.88)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.262745, 0.388235, 0.580392, 0.62)
+corner_radius_top_left = 16
+corner_radius_top_right = 16
+corner_radius_bottom_right = 16
+corner_radius_bottom_left = 16
+shadow_color = Color(0, 0, 0, 0.35)
+shadow_size = 16
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_normal"]
+bg_color = Color(0.117647, 0.160784, 0.239216, 0.95)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.27451, 0.423529, 0.654902, 0.82)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_pressed"]
+bg_color = Color(0.0941176, 0.129412, 0.196078, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.27451, 0.423529, 0.654902, 0.9)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_button_hover"]
+bg_color = Color(0.164706, 0.235294, 0.352941, 1)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.4, 0.643137, 1, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+shadow_color = Color(0.14902, 0.380392, 0.65098, 0.4)
+shadow_size = 6
+
+[node name="SinglePlayerSetup" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_sp_setup")
+
+[node name="HomeScreenBackground" type="CanvasLayer" parent="."]
+script = ExtResource("2_home_screen_background")
+
+[node name="BackdropTint" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.04, 0.08, 0.16, 0.35)
+
+[node name="ConfigPanel" type="PanelContainer" parent="."]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -220.0
+offset_top = -280.0
+offset_right = 220.0
+offset_bottom = 280.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_config_panel")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="ConfigPanel"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+alignment = 1
+
+[node name="Title" type="Label" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.937255, 0.964706, 1, 1)
+theme_override_font_sizes/font_size = 26
+text = "SINGLE PLAYER"
+horizontal_alignment = 1
+
+[node name="Tagline" type="Label" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.631373, 0.733333, 0.866667, 0.95)
+theme_override_font_sizes/font_size = 12
+text = "Configure your solo operation"
+horizontal_alignment = 1
+
+[node name="Sep1" type="HSeparator" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="GameTypeLabel" type="Label" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.8, 0.69, 1)
+theme_override_font_sizes/font_size = 13
+text = "Game Type:"
+
+[node name="GameTypeSelector" type="OptionButton" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 14
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+
+[node name="GameTypeDesc" type="Label" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.53, 0.62, 0.75, 0.85)
+theme_override_font_sizes/font_size = 10
+text = "Select a game type above."
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="Sep2" type="HSeparator" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="BotCountRow" type="HBoxContainer" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="BotCountLabel" type="Label" parent="ConfigPanel/VBoxContainer/BotCountRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(140, 0)
+theme_override_colors/font_color = Color(0.9, 0.8, 0.69, 1)
+theme_override_font_sizes/font_size = 13
+text = "Bots:"
+
+[node name="BotCountSpinner" type="SpinBox" parent="ConfigPanel/VBoxContainer/BotCountRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 1.0
+max_value = 4.0
+value = 3.0
+step = 1.0
+
+[node name="DifficultyRow" type="HBoxContainer" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="DifficultyLabel" type="Label" parent="ConfigPanel/VBoxContainer/DifficultyRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(140, 0)
+theme_override_colors/font_color = Color(0.9, 0.8, 0.69, 1)
+theme_override_font_sizes/font_size = 13
+text = "Difficulty:"
+
+[node name="DifficultySelector" type="OptionButton" parent="ConfigPanel/VBoxContainer/DifficultyRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 13
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+
+[node name="ShipClassTitle" type="Label" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.9, 0.8, 0.69, 1)
+theme_override_font_sizes/font_size = 13
+text = "Ship Class:"
+
+[node name="ShipClassSelector" type="OptionButton" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 14
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+
+[node name="ShipClassDesc" type="Label" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.53, 0.62, 0.75, 0.85)
+theme_override_font_sizes/font_size = 10
+text = "Balanced warship — 20 crew, standard broadside."
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="ConquestSection" type="VBoxContainer" parent="ConfigPanel/VBoxContainer"]
+visible = false
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="ConquestSep" type="HSeparator" parent="ConfigPanel/VBoxContainer/ConquestSection"]
+layout_mode = 2
+
+[node name="OpponentsTitle" type="Label" parent="ConfigPanel/VBoxContainer/ConquestSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.95, 0.88, 0.40, 1)
+theme_override_font_sizes/font_size = 13
+text = "Opponents:"
+
+[node name="OpponentsGrid" type="GridContainer" parent="ConfigPanel/VBoxContainer/ConquestSection"]
+layout_mode = 2
+columns = 3
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 8
+
+[node name="AddOpponentButton" type="Button" parent="ConfigPanel/VBoxContainer/ConquestSection"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 13
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+text = "+ Add Opponent"
+
+[node name="StartTerritoryRow" type="HBoxContainer" parent="ConfigPanel/VBoxContainer/ConquestSection"]
+visible = false
+layout_mode = 2
+
+[node name="StartTerritoryLabel" type="Label" parent="ConfigPanel/VBoxContainer/ConquestSection/StartTerritoryRow"]
+layout_mode = 2
+custom_minimum_size = Vector2(140, 0)
+theme_override_colors/font_color = Color(0.9, 0.8, 0.69, 1)
+theme_override_font_sizes/font_size = 13
+text = "Start Territory:"
+
+[node name="StartTerritorySelector" type="OptionButton" parent="ConfigPanel/VBoxContainer/ConquestSection/StartTerritoryRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 13
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+
+[node name="Sep3" type="HSeparator" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+
+[node name="LaunchButton" type="Button" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 16
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+text = "Launch Mission"
+
+[node name="BackButton" type="Button" parent="ConfigPanel/VBoxContainer"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.89, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 14
+theme_override_styles/normal = SubResource("StyleBoxFlat_button_normal")
+theme_override_styles/pressed = SubResource("StyleBoxFlat_button_pressed")
+theme_override_styles/hover = SubResource("StyleBoxFlat_button_hover")
+text = "Back"
+
+[connection signal="pressed" from="ConfigPanel/VBoxContainer/LaunchButton" to="." method="_on_launch_button_pressed"]
+[connection signal="pressed" from="ConfigPanel/VBoxContainer/BackButton" to="." method="_on_back_button_pressed"]

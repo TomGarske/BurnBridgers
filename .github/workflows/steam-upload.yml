@@ -2,11 +2,17 @@ name: Ironwake Steam Upload
 
 on:
   workflow_run:
-    workflows: ["Ironwake Steam Build (Windows)"]
+    workflows:
+      - "Ironwake Steam Build (Windows)"
+      - "Ironwake Steam Build (Linux / Steam Deck)"
     types: [completed]
 
 jobs:
   upload:
+    # Only run when the triggering build succeeded on main.
+    # Both platform builds trigger this workflow independently;
+    # the upload script handles missing depots gracefully (uploads
+    # whichever platforms have artifacts available).
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' }}
     runs-on: windows-latest
     permissions:
@@ -16,6 +22,7 @@ jobs:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       STEAM_APP_ID: ${{ secrets.STEAM_APP_ID }}
       STEAM_DEPOT_ID_WINDOWS: ${{ secrets.STEAM_DEPOT_ID_WINDOWS }}
+      STEAM_DEPOT_ID_LINUX: ${{ secrets.STEAM_DEPOT_ID_LINUX }}
       STEAM_USERNAME: ${{ secrets.STEAM_BUILDER_USERNAME }}
       STEAM_PASSWORD: ${{ secrets.STEAM_BUILDER_PASSWORD }}
       STEAM_TOTP_SECRET: ${{ secrets.STEAM_TOTP_SECRET }}
@@ -24,12 +31,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Download build artifact from triggering run
+      - name: Download Windows build artifact
         shell: pwsh
+        continue-on-error: true
         run: |
-          $runId = "${{ github.event.workflow_run.id }}"
-          Write-Host "Downloading artifact from build run $runId..."
-          gh run download $runId --name ironwake-windows-steam-build --dir build/windows/
+          # Try to download Windows artifact from the most recent successful build.
+          # If the triggering workflow IS the Windows build, use its run ID.
+          # Otherwise, find the latest successful Windows build run.
+          $triggeringWorkflow = "${{ github.event.workflow_run.name }}"
+          if ($triggeringWorkflow -eq "Ironwake Steam Build (Windows)") {
+            $runId = "${{ github.event.workflow_run.id }}"
+          } else {
+            $runId = (gh run list --workflow "steam-playtest.yml" --branch main --status success --limit 1 --json databaseId --jq ".[0].databaseId")
+          }
+          if ($runId) {
+            Write-Host "Downloading Windows artifact from run $runId..."
+            gh run download $runId --name ironwake-windows-steam-build --dir build/windows/
+          } else {
+            Write-Host "No Windows build artifact found — skipping."
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Linux build artifact
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $triggeringWorkflow = "${{ github.event.workflow_run.name }}"
+          if ($triggeringWorkflow -eq "Ironwake Steam Build (Linux / Steam Deck)") {
+            $runId = "${{ github.event.workflow_run.id }}"
+          } else {
+            $runId = (gh run list --workflow "steam-playtest-linux.yml" --branch main --status success --limit 1 --json databaseId --jq ".[0].databaseId")
+          }
+          if ($runId) {
+            Write-Host "Downloading Linux artifact from run $runId..."
+            gh run download $runId --name ironwake-linux-steam-build --dir build/linux/
+          } else {
+            Write-Host "No Linux build artifact found — skipping."
+          }
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -38,4 +77,5 @@ jobs:
         run: |
           ./tools/ci/upload-steam.ps1 `
             -ProjectRoot "$PWD" `
-            -BuildOutputDir "build/windows"
+            -BuildOutputDir "build/windows" `
+            -LinuxBuildOutputDir "build/linux"

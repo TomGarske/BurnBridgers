@@ -7,8 +7,10 @@ enum MatchPhase { LOBBY, IN_MATCH, GAME_OVER }
 const MATCH_SCENE_PATH: String = "res://scenes/game/ironwake/ironwake_arena.tscn"
 const IRONWAKE_SCENE_PATH: String = "res://scenes/game/ironwake/ironwake_arena.tscn"
 const FLEET_SCENE_PATH: String = "res://scenes/game/ironwake/ironwake_fleet_arena.tscn"
+const CONQUEST_SCENE_PATH: String = "res://scenes/game/ironwake/conquest_arena.tscn"
 const HOME_SCREEN_SCENE_PATH: String = "res://scenes/screens/home_screen.tscn"
 const LOBBY_SCENE_PATH: String = "res://scenes/screens/lobby.tscn"
+const SINGLE_PLAYER_SETUP_SCENE_PATH: String = "res://scenes/screens/single_player_setup.tscn"
 const DEFAULT_GAME_MODE_ID: String = "ironwake"
 const DEFAULT_MUSIC_PROFILE: Dictionary = {
 	"intensity": 1.0,
@@ -18,6 +20,7 @@ const DEFAULT_MUSIC_PROFILE: Dictionary = {
 const MODE_MUSIC_PROFILES: Dictionary = {
 	"ironwake": {"intensity": 1.05, "speed": 0.95, "tone": 0.96},
 	"fleet_battle": {"intensity": 1.15, "speed": 0.90, "tone": 0.92},
+	"conquest": {"intensity": 1.20, "speed": 0.85, "tone": 0.90},
 }
 const GAME_MODES: Array[Dictionary] = [
 	{
@@ -38,6 +41,15 @@ const GAME_MODES: Array[Dictionary] = [
 		"description": "Command a fleet of 5 ships against enemy fleets. Captain your flagship and issue orders to wingmen.",
 		"enabled": true,
 	},
+	{
+		"id": "conquest",
+		"label": "Conquest",
+		"subtitle": "Territory Control",
+		"badge": "[CONQUEST]",
+		"scene_path": CONQUEST_SCENE_PATH,
+		"description": "Risk-style naval conquest. Control territories, build garrisons, and eliminate rival factions to dominate the seas.",
+		"enabled": true,
+	},
 ]
 # ---------------------------------------------------------------------------
 # State
@@ -48,6 +60,11 @@ var players: Dictionary = {}
 var player_ship_classes: Dictionary = {}
 var local_ship_class: int = ShipClassConfig.DEFAULT_CLASS
 var match_phase: MatchPhase = MatchPhase.LOBBY
+## Single-player setup config (set by single_player_setup screen, read by arenas).
+var sp_bot_count: int = 3
+var sp_difficulty: int = 1  # 0=Easy, 1=Normal, 2=Hard, 3=Admiral (placeholder)
+var sp_conquest_factions: int = 3
+var sp_conquest_start_territory: String = ""
 var _next_team_id: int = 0
 var music_enabled: bool = true
 var selected_game_mode_id: String = DEFAULT_GAME_MODE_ID

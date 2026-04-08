@@ -323,7 +323,7 @@ func _on_confirm_join_button_pressed() -> void:
 		DebugOverlay.log_message("[HomeScreen] Invalid lobby ID entered.", true)
 
 func _on_test_button_pressed() -> void:
-	GameManager.start_offline_test_match("fleet_battle")
+	get_tree().change_scene_to_file(GameManager.SINGLE_PLAYER_SETUP_SCENE_PATH)
 
 func _on_exit_button_pressed() -> void:
 	quit_confirm_dialog.title = "Exit Ironwake"
