@@ -234,6 +234,9 @@ func _hull_visual_screen_pos(p: Dictionary) -> Vector2:
 
 
 func _ready() -> void:
+	# Apply single-player config from GameManager (set by single_player_setup screen).
+	if GameManager != null and GameManager.sp_bot_count > 0:
+		local_sim_bot_count = clampi(GameManager.sp_bot_count, 1, 4)
 	# Initialise helpers first — other setup calls may delegate into them.
 	_sound = IronwakeSound.new()
 	_sound.init(self)

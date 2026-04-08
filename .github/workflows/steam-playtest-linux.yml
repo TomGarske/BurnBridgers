@@ -1,0 +1,52 @@
+name: Ironwake Steam Build (Linux / Steam Deck)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GODOT_VERSION: "4.6.1"
+      EXPORT_PRESET_NAME: "Linux"
+      BUILD_OUTPUT_DIR: "build/linux"
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          include-templates: true
+          use-dotnet: true
+
+      - name: Verify Godot CLI
+        run: |
+          echo "GODOT4=${GODOT4:-<unset>}"
+          echo "GODOT=${GODOT:-<unset>}"
+          which godot4 2>/dev/null || echo "godot4 not in PATH"
+          which godot 2>/dev/null || echo "godot not in PATH"
+
+      - name: Install GDExtensions (GodotSteam)
+        run: |
+          chmod +x ./tools/ci/setup-extensions.sh
+          ./tools/ci/setup-extensions.sh "$PWD"
+
+      - name: Export Linux build
+        run: |
+          chmod +x ./tools/ci/export-linux.sh
+          ./tools/ci/export-linux.sh "$PWD" "$EXPORT_PRESET_NAME" "$BUILD_OUTPUT_DIR"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ironwake-linux-steam-build
+          path: build/linux/
+          retention-days: 7
