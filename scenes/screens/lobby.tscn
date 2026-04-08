@@ -58,7 +58,8 @@ theme_override_constants/separation = 20
 
 [node name="LeftPanel" type="VBoxContainer" parent="LobbyCard/MainHBox"]
 layout_mode = 2
-size_flags_horizontal = 3
+custom_minimum_size = Vector2(260, 0)
+size_flags_horizontal = 0
 theme_override_constants/separation = 8
 
 [node name="LobbyIdLabel" type="Label" parent="LobbyCard/MainHBox/LeftPanel"]

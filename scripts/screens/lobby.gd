@@ -316,18 +316,11 @@ func _refresh_online_friends() -> void:
 		UiStyleScript.style_body(name_label)
 		row.add_child(name_label)
 
-		var status_label := Label.new()
 		var friend_status := SteamManager.get_friend_status(friend_id)
 		var has_invite_state: bool = SteamManager.invited_friend_ids.has(friend_id)
 		var invite_state: SteamManager.InviteState = SteamManager.InviteState.INVITED
 		if has_invite_state:
 			invite_state = SteamManager.get_invite_state(friend_id)
-		status_label.text = friend_status
-		status_label.custom_minimum_size = Vector2(120, 0)
-		UiStyleScript.style_body(status_label, true)
-		if friend_status == "In Lobby":
-			status_label.add_theme_color_override("font_color", UiStyleScript.ACCENT_SOFT)
-		row.add_child(status_label)
 
 		var invite_button := Button.new()
 		invite_button.text = "Invite"
