@@ -58,8 +58,8 @@ theme_override_constants/separation = 16
 
 [node name="LeftPanel" type="VBoxContainer" parent="LobbyCard/MainHBox"]
 layout_mode = 2
-custom_minimum_size = Vector2(240, 0)
-size_flags_horizontal = 0
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 1.0
 theme_override_constants/separation = 8
 
 [node name="LobbyIdLabel" type="Label" parent="LobbyCard/MainHBox/LeftPanel"]
@@ -77,7 +77,7 @@ theme_override_font_sizes/font_size = 11
 [node name="Sep1" type="HSeparator" parent="LobbyCard/MainHBox/LeftPanel"]
 
 [node name="GameModeTitle" type="Label" parent="LobbyCard/MainHBox/LeftPanel"]
-text = "Mission Profile:"
+text = "Game Mode:"
 theme_override_font_sizes/font_size = 13
 theme_override_colors/font_color = Color(0.9, 0.8, 0.69, 1)
 
@@ -122,6 +122,8 @@ size_flags_horizontal = 3
 size_flags_stretch_ratio = 1.0
 theme_override_constants/separation = 6
 
+
+
 [node name="PlayersTitle" type="Label" parent="LobbyCard/MainHBox/CenterPanel"]
 text = "Crew Roster:"
 theme_override_font_sizes/font_size = 13
@@ -140,7 +142,7 @@ theme_override_font_sizes/font_size = 9
 [node name="RightPanel" type="VBoxContainer" parent="LobbyCard/MainHBox"]
 layout_mode = 2
 size_flags_horizontal = 3
-size_flags_stretch_ratio = 1.2
+size_flags_stretch_ratio = 1.0
 theme_override_constants/separation = 6
 
 [node name="FriendsTitle" type="Label" parent="LobbyCard/MainHBox/RightPanel"]

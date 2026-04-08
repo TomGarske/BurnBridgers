@@ -401,7 +401,5 @@ func _create_avatar_rect(steam_id: int, avatar_size: int) -> TextureRect:
 func _refresh_crew_status() -> void:
 	if lobby_id_label == null:
 		return
-	var role_text: String = "Command Lead" if SteamManager.is_host else "Operative"
-	var mode: Dictionary = GameManager.get_selected_game_mode()
-	var mode_label: String = str(mode.get("label", "Unknown Mission"))
-	lobby_id_label.text = "Crew Status: %s | %s" % [role_text, mode_label]
+	var role_text: String = "Host" if SteamManager.is_host else "Player"
+	lobby_id_label.text = role_text
